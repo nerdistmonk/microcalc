@@ -12,6 +12,7 @@
 #define MAX_COLS 26
 #define MIN_CELL_WIDTH 10
 #define MAX_CELL_WIDTH 30
+#define MAX_UNDO 20
 
 #define CTRL(c) ((c) & 0x1f)
 
@@ -31,8 +32,15 @@ typedef struct {
     int is_active;
 } Clipboard;
 
+typedef struct {
+    Cell grid_state[MAX_ROWS][MAX_COLS];
+} UndoState;
+
 Cell grid[MAX_ROWS][MAX_COLS];
 Clipboard clipboard = { .is_active = 0 };
+
+UndoState undo_stack[MAX_UNDO];
+int undo_top = 0;
 
 int cursor_r = 0;
 int cursor_c = 0;
@@ -41,11 +49,9 @@ int view_r = 0;
 int view_c = 0;
 int is_all_selected = 0;
 
-// Track currently evaluating cell to prevent self-referential accumulation
 static int cur_eval_r = -1;
 static int cur_eval_c = -1;
 
-// Multi-cell selection range via mouse right-click
 int sel_start_r = -1;
 int sel_start_c = -1;
 int sel_end_r = -1;
@@ -54,13 +60,33 @@ int is_selecting = 0;
 
 int cursor_flash_error = 0;
 
-// Synchronized On-Screen Help
-const char *HELP_LINE_1 = " Nav: Arrows | Click: Select/Edit | RClick: Range | Ctrl+A: All ";
-const char *HELP_LINE_2 = " Del: Clear | Ctrl+C/X/V: Copy/Cut/Paste | Ctrl+F: Format | Ctrl+S: Save ";
+// Synchronized On-Screen Help Header Lines
+const char *HELP_LINE_1 = " Nav: Arrows | Click: Select | RClick: Range | Ctrl+A: All | Ctrl+Z: Undo | Del: Clear ";
+const char *HELP_LINE_2 = " Ctrl+C/X/V: Copy/Cut/Paste | Ctrl+F: Format | Ctrl+P: PDF | Ctrl+S/O: Save/Open | Ctrl+H: Help ";
 char status_msg[128] = "";
 
-// Forward declarations
 void recalculate_all(void);
+
+void push_undo_state(void) {
+    if (undo_top < MAX_UNDO) {
+        memcpy(undo_stack[undo_top].grid_state, grid, sizeof(grid));
+        undo_top++;
+    } else {
+        memmove(&undo_stack[0], &undo_stack[1], sizeof(UndoState) * (MAX_UNDO - 1));
+        memcpy(undo_stack[MAX_UNDO - 1].grid_state, grid, sizeof(grid));
+    }
+}
+
+void undo_action(void) {
+    if (undo_top > 0) {
+        undo_top--;
+        memcpy(grid, undo_stack[undo_top].grid_state, sizeof(grid));
+        recalculate_all();
+        snprintf(status_msg, sizeof(status_msg), " Undo successful. ");
+    } else {
+        snprintf(status_msg, sizeof(status_msg), " Nothing to undo! ");
+    }
+}
 
 double parse_number(const char *str) {
     int is_negative = 0;
@@ -86,6 +112,19 @@ double parse_number(const char *str) {
     return is_negative ? -val : val;
 }
 
+int is_pure_number(const char *str) {
+    int has_digit = 0;
+    for (; *str; str++) {
+        if (isdigit((unsigned char)*str)) {
+            has_digit = 1;
+        } else if (*str != '.' && *str != '$' && *str != '-' && *str != '+' && 
+                   *str != ',' && *str != ' ' && *str != '(' && *str != ')') {
+            return 0;
+        }
+    }
+    return has_digit;
+}
+
 int get_col_width(int c) {
     int max_len = MIN_CELL_WIDTH;
     for (int r = 0; r < MAX_ROWS; r++) {
@@ -103,7 +142,7 @@ int get_col_width(int c) {
             max_len = len;
         }
     }
-    max_len += 2; // Padding
+    max_len += 2;
     if (max_len > MAX_CELL_WIDTH) max_len = MAX_CELL_WIDTH;
     return max_len;
 }
@@ -139,25 +178,28 @@ void show_cheatsheet(void) {
     mvprintw(1, 2, " ==================== microcalc Cheat Sheet ==================== ");
     attroff(COLOR_PAIR(1) | A_BOLD);
 
-    mvprintw(3, 2, " [ Navigation & Mouse ]");
-    mvprintw(4, 4, "• Arrow Keys         : Move cursor around the sheet");
-    mvprintw(5, 4, "• Left Click         : Select cell (Click active cell again to edit)");
-    mvprintw(6, 4, "• Right Click        : Start or set multi-cell selection range");
-    mvprintw(7, 4, "• Double Left Click  : Quick sum selected range into an empty target cell");
+    mvprintw(3, 2, " [ Navigation & Mouse Controls ]");
+    mvprintw(4, 4, "• Arrow Keys         : Navigate active cell cursor");
+    mvprintw(5, 4, "• Left Click         : Select cell (Click active cell to edit)");
+    mvprintw(6, 4, "• Right Click        : Drag or set multi-cell selection range");
+    mvprintw(7, 4, "• Double Left Click  : Quick-sum range into empty target cell");
 
-    mvprintw(9, 2, " [ Selection & Formatting ]");
-    mvprintw(10, 4, "• Ctrl+A             : Toggle select all cells");
-    mvprintw(11, 4, "• Ctrl+C / X / V     : Copy, Cut, or Paste active selection range");
-    mvprintw(12, 4, "• Ctrl+F             : Clean up/standardize formatting ($20.00 / 20.00)");
-    mvprintw(13, 4, "• Del / Backspace    : Clear active cell or current selection range");
+    mvprintw(9, 2, " [ Editing, Formatting & Clipboard ]");
+    mvprintw(10, 4, "• Enter / Return     : Edit contents of selected cell");
+    mvprintw(11, 4, "• Del / Backspace    : Clear active cell or current selection");
+    mvprintw(12, 4, "• Ctrl+Z             : Undo last grid action / load");
+    mvprintw(13, 4, "• Ctrl+A             : Toggle select all cells");
+    mvprintw(14, 4, "• Ctrl+C / X / V     : Copy, Cut, or Paste selection range");
+    mvprintw(15, 4, "• Ctrl+F             : Clean up / standardize formatting ($20.00 / 20.00)");
+    mvprintw(16, 4, "• +, -, 0 Keys       : Tag cell color (Green profit, Red loss, Normal)");
 
-    mvprintw(15, 2, " [ Formulas & Precedence ]");
-    mvprintw(16, 4, "• Expressions        : =A0+A1*(B2-5)/SUM(C0:C4)");
-    mvprintw(17, 4, "• Sum / Average      : =SUM(A0:A4) / =AVG(A0:A4) or shorthand =A0:A4 / =A0aA4");
-    mvprintw(18, 4, "• Max / Min / Count  : =MAX(A0:A4) / =MIN(A0:A4) / =COUNT(A0:A4)");
+    mvprintw(18, 2, " [ File I/O & Formulas ]");
+    mvprintw(19, 4, "• Ctrl+S / Ctrl+O    : Save / Open (.mc native or .csv flat spreadsheet)");
+    mvprintw(20, 4, "• Ctrl+P             : Export printable sheet as PDF document");
+    mvprintw(21, 4, "• Formula Examples   : =A0+A1*(B2-5) | =SUM(A0:A10) | =AVG(C0:C5)");
 
     attron(COLOR_PAIR(3) | A_BOLD);
-    mvprintw(20, 2, " Press any key to return to your spreadsheet... ");
+    mvprintw(23, 2, " Press any key to return to your spreadsheet... ");
     attroff(COLOR_PAIR(3) | A_BOLD);
     refresh();
     getch();
@@ -374,9 +416,10 @@ void recalculate_all(void) {
     }
 }
 
-/* ==================== FORMAT CLEANUP FUNCTION ==================== */
+/* ==================== FORMAT CLEANUP & PDF EXPORT ==================== */
 
 void cleanup_selection_format(void) {
+    push_undo_state();
     int min_r, max_r, min_c, max_c;
     if (!is_selecting && !is_all_selected) {
         min_r = 0; max_r = MAX_ROWS - 1;
@@ -390,34 +433,23 @@ void cleanup_selection_format(void) {
         int has_decimal = 0;
 
         for (int r = min_r; r <= max_r; r++) {
-            if (grid[r][c].text[0] != '\0' && grid[r][c].text[0] != '=') {
+            if (grid[r][c].text[0] != '\0' && grid[r][c].text[0] != '=' && is_pure_number(grid[r][c].text)) {
                 if (strchr(grid[r][c].text, '$')) has_dollar = 1;
                 if (strchr(grid[r][c].text, '.')) has_decimal = 1;
             }
         }
 
         for (int r = min_r; r <= max_r; r++) {
-            if (grid[r][c].text[0] != '\0' && grid[r][c].text[0] != '=') {
+            if (grid[r][c].text[0] != '\0' && grid[r][c].text[0] != '=' && is_pure_number(grid[r][c].text)) {
                 double val = parse_number(grid[r][c].text);
-                
-                int is_num = 0;
-                for (size_t i = 0; i < strlen(grid[r][c].text); i++) {
-                    if (isdigit((unsigned char)grid[r][c].text[i])) {
-                        is_num = 1;
-                        break;
+                if (has_dollar) {
+                    if (val < 0) {
+                        snprintf(grid[r][c].text, sizeof(grid[r][c].text), "-$%.2f", fabs(val));
+                    } else {
+                        snprintf(grid[r][c].text, sizeof(grid[r][c].text), "$%.2f", val);
                     }
-                }
-
-                if (is_num) {
-                    if (has_dollar) {
-                        if (val < 0) {
-                            snprintf(grid[r][c].text, sizeof(grid[r][c].text), "-$%.2f", fabs(val));
-                        } else {
-                            snprintf(grid[r][c].text, sizeof(grid[r][c].text), "$%.2f", val);
-                        }
-                    } else if (has_decimal) {
-                        snprintf(grid[r][c].text, sizeof(grid[r][c].text), "%.2f", val);
-                    }
+                } else if (has_decimal) {
+                    snprintf(grid[r][c].text, sizeof(grid[r][c].text), "%.2f", val);
                 }
             }
         }
@@ -425,6 +457,158 @@ void cleanup_selection_format(void) {
 
     recalculate_all();
     snprintf(status_msg, sizeof(status_msg), " Column formatting standardized! ");
+}
+
+static void escape_pdf_string(const char *src, char *dest, size_t dest_size) {
+    size_t d = 0;
+    for (size_t i = 0; src[i] != '\0' && d < dest_size - 2; i++) {
+        if (src[i] == '(' || src[i] == ')' || src[i] == '\\') {
+            dest[d++] = '\\';
+        }
+        dest[d++] = src[i];
+    }
+    dest[d] = '\0';
+}
+
+void get_cell_display_text(int r, int c, char *out, size_t max_len) {
+    if (grid[r][c].text[0] == '\0') {
+        out[0] = '\0';
+    } else if (grid[r][c].is_formula) {
+        snprintf(out, max_len, "%g", grid[r][c].value);
+    } else {
+        strncpy(out, grid[r][c].text, max_len - 1);
+        out[max_len - 1] = '\0';
+    }
+}
+
+void export_pdf(const char *filename) {
+    char pdf_name[128];
+    if (strchr(filename, '.') == NULL) {
+        snprintf(pdf_name, sizeof(pdf_name), "%s.pdf", filename);
+    } else {
+        snprintf(pdf_name, sizeof(pdf_name), "%s", filename);
+    }
+
+    FILE *f = fopen(pdf_name, "wb");
+    if (!f) {
+        snprintf(status_msg, sizeof(status_msg), " Error: Could not generate PDF. ");
+        return;
+    }
+
+    recalculate_all();
+
+    // Extract title from filename
+    char title_buf[64] = {0};
+    const char *base_name = strrchr(pdf_name, '/');
+    base_name = base_name ? base_name + 1 : pdf_name;
+    strncpy(title_buf, base_name, sizeof(title_buf) - 1);
+    char *dot = strrchr(title_buf, '.');
+    if (dot) *dot = '\0';
+    for (int i = 0; title_buf[i]; i++) title_buf[i] = toupper((unsigned char)title_buf[i]);
+
+    // Find grid bounding box for populated cells
+    int max_r = 0, max_c = 0;
+    for (int r = 0; r < MAX_ROWS; r++) {
+        for (int c = 0; c < MAX_COLS; c++) {
+            if (grid[r][c].text[0] != '\0') {
+                if (r > max_r) max_r = r;
+                if (c > max_c) max_c = c;
+            }
+        }
+    }
+
+    // Dynamic column width calculations
+    float pdf_col_widths[MAX_COLS];
+    for (int c = 0; c <= max_c; c++) {
+        int max_len = 0;
+        for (int r = 0; r <= max_r; r++) {
+            char disp[64];
+            get_cell_display_text(r, c, disp, sizeof(disp));
+            int len = (int)strlen(disp);
+            if (len > max_len) max_len = len;
+        }
+        pdf_col_widths[c] = (max_len > 0) ? (max_len * 7.0f + 14.0f) : 40.0f;
+    }
+
+    long obj_offsets[6];
+    fprintf(f, "%%PDF-1.4\n");
+
+    obj_offsets[1] = ftell(f);
+    fprintf(f, "1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n");
+
+    obj_offsets[2] = ftell(f);
+    fprintf(f, "2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n");
+
+    obj_offsets[3] = ftell(f);
+    fprintf(f, "3 0 obj\n<< /Type /Page /Parent 2 0 R /Resources << /Font << /F1 4 0 R >> >> /MediaBox [0 0 612 792] /Contents 5 0 R >>\nendobj\n");
+
+    obj_offsets[4] = ftell(f);
+    fprintf(f, "4 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>\nendobj\n");
+
+    obj_offsets[5] = ftell(f);
+    long header_pos = ftell(f);
+    fprintf(f, "5 0 obj\n<< /Length 00000000 >>\nstream\n");
+    long content_start = ftell(f);
+
+    // Title Header
+    char escaped_title[128];
+    escape_pdf_string(title_buf, escaped_title, sizeof(escaped_title));
+    fprintf(f, "BT /F1 14 Tf 1 0 0 1 40 750 Tm (%s SPREADSHEET) Tj ET\n", escaped_title);
+
+    float start_y = 720.0f;
+    float row_h = 18.0f;
+
+    // Draw Grid Boxes
+    for (int r = 0; r <= max_r; r++) {
+        float x_acc = 40.0f;
+        float y = start_y - (r * row_h);
+        for (int c = 0; c <= max_c; c++) {
+            float col_w = pdf_col_widths[c];
+            fprintf(f, "0.5 w %.1f %.1f %.1f %.1f re S\n", x_acc, y - row_h, col_w, row_h);
+            x_acc += col_w;
+        }
+    }
+
+    // Render Text Contents using absolute matrix positioning (Tm)
+    fprintf(f, "BT /F1 9 Tf\n");
+    for (int r = 0; r <= max_r; r++) {
+        float x_acc = 40.0f;
+        float y = start_y - (r * row_h);
+        for (int c = 0; c <= max_c; c++) {
+            float col_w = pdf_col_widths[c];
+            char disp[64];
+            get_cell_display_text(r, c, disp, sizeof(disp));
+            if (disp[0] != '\0') {
+                char escaped_val[128] = {0};
+                escape_pdf_string(disp, escaped_val, sizeof(escaped_val));
+                fprintf(f, "1 0 0 1 %.1f %.1f Tm (%s) Tj\n", x_acc + 4.0f, y - 13.0f, escaped_val);
+            }
+            x_acc += col_w;
+        }
+    }
+    fprintf(f, "ET\n");
+
+    long content_end = ftell(f);
+    long stream_len = content_end - content_start;
+
+    // Fixed 8-digit padding offset write
+    fseek(f, header_pos, SEEK_SET);
+    fprintf(f, "5 0 obj\n<< /Length %08ld >>\nstream\n", stream_len);
+    fseek(f, content_end, SEEK_SET);
+    fprintf(f, "\nendstream\nendobj\n");
+
+    // XRef Table
+    long xref_pos = ftell(f);
+    fprintf(f, "xref\n0 6\n");
+    fprintf(f, "0000000000 65535 f \n");
+    for (int i = 1; i <= 5; i++) {
+        fprintf(f, "%010ld 00000 n \n", obj_offsets[i]);
+    }
+
+    fprintf(f, "trailer\n<< /Size 6 /Root 1 0 R >>\nstartxref\n%ld\n%%%%EOF\n", xref_pos);
+
+    fclose(f);
+    snprintf(status_msg, sizeof(status_msg), " Successfully exported PDF to %s ", pdf_name);
 }
 
 /* ==================== CLIPBOARD & RANGE OPERATIONS ==================== */
@@ -477,6 +661,7 @@ void copy_selection(void) {
 }
 
 void cut_selection(void) {
+    push_undo_state();
     int min_r, max_r, min_c, max_c;
     get_selected_range(&min_r, &max_r, &min_c, &max_c);
 
@@ -499,6 +684,7 @@ void paste_selection(void) {
         return;
     }
 
+    push_undo_state();
     int delta_r = cursor_r - clipboard.start_r;
     int delta_c = cursor_c - clipboard.start_c;
 
@@ -528,6 +714,7 @@ void paste_selection(void) {
 }
 
 void clear_selected_range(void) {
+    push_undo_state();
     if (is_selecting || is_all_selected) {
         int min_r, max_r, min_c, max_c;
         get_selected_range(&min_r, &max_r, &min_c, &max_c);
@@ -692,6 +879,7 @@ void load_csv(const char *filename) {
         return;
     }
 
+    push_undo_state();
     memset(grid, 0, sizeof(grid));
     char line[512];
     int r = 0;
@@ -700,7 +888,7 @@ void load_csv(const char *filename) {
         int c = 0;
         char *ptr = line;
 
-        while (*ptr && c < MAX_COLS) {
+        while (*ptr && *ptr != '\r' && *ptr != '\n' && c < MAX_COLS) {
             char cell_buf[64] = {0};
             int idx = 0;
             int in_quotes = 0;
@@ -827,6 +1015,7 @@ void load_sheet(const char *filename) {
         return;
     }
 
+    push_undo_state();
     memset(grid, 0, sizeof(grid));
 
     int r, c, col_st;
@@ -871,6 +1060,16 @@ void prompt_load(void) {
     }
 }
 
+void prompt_pdf_export(void) {
+    char filename[128] = {0};
+    prompt_input("Export PDF filename [Tab to autocomplete]: ", filename, sizeof(filename));
+    if (strlen(filename) > 0) {
+        export_pdf(filename);
+    } else {
+        snprintf(status_msg, sizeof(status_msg), " Export cancelled. ");
+    }
+}
+
 void edit_cell(void) {
     echo();
     curs_set(1);
@@ -880,6 +1079,8 @@ void edit_cell(void) {
 
     char buffer[64];
     getnstr(buffer, 63);
+
+    push_undo_state();
 
     if (strcasecmp(buffer, "=D") == 0) {
         time_t t = time(NULL);
@@ -921,7 +1122,7 @@ void draw_grid(void) {
 
     int col_widths[MAX_COLS];
     int visible_cols = 0;
-    int x_acc = 5;
+    int x_acc = 4;
 
     for (int c = view_c; c < MAX_COLS; c++) {
         col_widths[c] = get_col_width(c);
@@ -937,7 +1138,7 @@ void draw_grid(void) {
     if (cursor_c >= view_c + visible_cols) {
         view_c = cursor_c - visible_cols + 1;
         visible_cols = 0;
-        x_acc = 5;
+        x_acc = 4;
         for (int c = view_c; c < MAX_COLS; c++) {
             col_widths[c] = get_col_width(c);
             if (x_acc + col_widths[c] + 1 <= max_x) {
@@ -1059,6 +1260,7 @@ void handle_mouse(void) {
             } else if (event.bstate & BUTTON1_DOUBLE_CLICKED) {
                 if (grid[clicked_r][clicked_c].text[0] == '\0') {
                     if (is_selecting) {
+                        push_undo_state();
                         int min_r, max_r, min_c, max_c;
                         get_selected_range(&min_r, &max_r, &min_c, &max_c);
 
@@ -1160,6 +1362,9 @@ int main(int argc, char *argv[]) {
             case KEY_BACKSPACE:
                 clear_selected_range();
                 break;
+            case CTRL('z'):
+                undo_action();
+                break;
             case CTRL('c'):
                 copy_selection();
                 break;
@@ -1171,6 +1376,9 @@ int main(int argc, char *argv[]) {
                 break;
             case CTRL('f'):
                 cleanup_selection_format();
+                break;
+            case CTRL('p'):
+                prompt_pdf_export();
                 break;
             case CTRL('s'):
                 prompt_save();
