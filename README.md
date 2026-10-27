@@ -1,6 +1,6 @@
-Microcalc is a highly improved variant of the C variant of VisiCalc.
+Microcalc is a visual calculator/spreadsheet made in the vein of VisiCalc.
 
-Features Include:
+# Features:
 
 Loading/Saving in .mc and .csv formats (csv works with excel, though import from excel will only bring text/figures into
 the program, you'll need to make new formulas due to fundamental differences between Microcalc and anything else)
@@ -21,6 +21,3 @@ Color support in the program and the ability to color numbers in a cell, so you 
 make a number red for a visual aid.
 
 Supports the four major groups of arithmetic, adding, subtracting, multiplication and division.
-
-This program is super new, and while I have been doing a lot of Q/A on it and testing it's functions, it's still very new and
-still getting additions made to it.
