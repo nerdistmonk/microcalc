@@ -15,7 +15,7 @@ void show_cheatsheet(void) {
     mvprintw(9, 2, " [ Editing, Formatting & Clipboard ]");
     mvprintw(10, 4, "• Enter / Return     : Edit contents of selected cell");
     mvprintw(11, 4, "• Del / Backspace    : Clear active cell or current selection");
-    mvprintw(12, 4, "• Ctrl+Z             : Undo last grid action / load");
+    mvprintw(12, 4, "• Ctrl+Z / Ctrl+R    : Undo / Redo last grid action");
     mvprintw(13, 4, "• Ctrl+A             : Toggle select all cells");
     mvprintw(14, 4, "• Ctrl+C / X / V     : Copy, Cut, or Paste selection range");
     mvprintw(15, 4, "• Ctrl+F             : Clean up / standardize formatting ($20.00 / 20.00)");
@@ -112,10 +112,31 @@ void draw_grid(void) {
         if (visible_cols == 0) visible_cols = 1;
     }
 
+    // Draw top information panels spanning the full width (max_x)
     attron(COLOR_PAIR(1) | A_BOLD);
-    mvprintw(0, 0, " microcalc: [%c%d] Val/Formula: %-40s ", 'A' + cursor_c, cursor_r, grid[cursor_r][cursor_c].text);
-    mvprintw(1, 0, "%-80s", (status_msg[0] != '\0') ? status_msg : HELP_LINE_1);
-    mvprintw(2, 0, "%-80s", HELP_LINE_2);
+    {
+        char buf[512];
+        int len;
+
+        // Row 0: Active cell info & formula/value
+        snprintf(buf, sizeof(buf), " microcalc: [%c%d] Val/Formula: %s ", 'A' + cursor_c, cursor_r, grid[cursor_r][cursor_c].text);
+        len = (int)strlen(buf);
+        mvprintw(0, 0, "%s", buf);
+        for (int x = len; x < max_x; x++) printw(" ");
+
+        // Row 1: Status message or Help Line 1
+        const char *line1_text = (status_msg[0] != '\0') ? status_msg : HELP_LINE_1;
+        snprintf(buf, sizeof(buf), "%s", line1_text);
+        len = (int)strlen(buf);
+        mvprintw(1, 0, "%s", buf);
+        for (int x = len; x < max_x; x++) printw(" ");
+
+        // Row 2: Help Line 2
+        snprintf(buf, sizeof(buf), "%s", HELP_LINE_2);
+        len = (int)strlen(buf);
+        mvprintw(2, 0, "%s", buf);
+        for (int x = len; x < max_x; x++) printw(" ");
+    }
     attroff(COLOR_PAIR(1) | A_BOLD);
 
     attron(COLOR_PAIR(3));

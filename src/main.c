@@ -5,6 +5,8 @@ Cell grid[MAX_ROWS][MAX_COLS];
 Clipboard clipboard = { .is_active = 0 };
 UndoState undo_stack[MAX_UNDO];
 int undo_top = 0;
+UndoState redo_stack[MAX_UNDO];
+int redo_top = 0;
 
 int cursor_r = 0;
 int cursor_c = 0;
@@ -21,7 +23,7 @@ int is_selecting = 0;
 
 int cursor_flash_error = 0;
 
-const char *HELP_LINE_1 = " Nav: Arrows | Click: Select | RClick: Range | Ctrl+A: All | Ctrl+Z: Undo | Del: Clear ";
+const char *HELP_LINE_1 = " Nav: Arrows | Click: Select | RClick: Range | Ctrl+A: All | Ctrl+Z: Undo | Ctrl+R: Redo | Del: Clear ";
 const char *HELP_LINE_2 = " Ctrl+C/X/V: Copy/Cut/Paste | Ctrl+F: Format | Ctrl+P: PDF | Ctrl+S/O: Save/Open | Ctrl+H: Help ";
 char status_msg[128] = "";
 
@@ -35,7 +37,7 @@ int main(int argc, char *argv[]) {
     curs_set(0);
 
     mousemask(BUTTON1_CLICKED | BUTTON3_CLICKED | BUTTON1_DOUBLE_CLICKED, NULL);
-    mouseinterval(250);
+    mouseinterval(50);
 
     if (has_colors()) {
         start_color();
@@ -98,6 +100,9 @@ int main(int argc, char *argv[]) {
                 break;
             case CTRL('z'):
                 undo_action();
+                break;
+            case CTRL('r'):
+                redo_action();
                 break;
             case CTRL('c'):
                 copy_selection();

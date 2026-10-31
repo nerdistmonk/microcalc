@@ -44,6 +44,9 @@ extern Cell grid[MAX_ROWS][MAX_COLS];
 extern Clipboard clipboard;
 extern UndoState undo_stack[MAX_UNDO];
 extern int undo_top;
+extern UndoState redo_stack[MAX_UNDO];
+extern int redo_top;
+
 extern int cursor_r;
 extern int cursor_c;
 extern int view_r;
@@ -69,6 +72,7 @@ int is_cell_selected(int r, int c);
 
 void push_undo_state(void);
 void undo_action(void);
+void redo_action(void);
 void recalculate_all(void);
 void eval_cell(int r, int c);
 

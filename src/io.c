@@ -1,5 +1,42 @@
 #include "microcalc.h"
 
+// System clipboard helper: tries wl-copy, xclip, then xsel
+void write_system_clipboard(const char *text) {
+    FILE *f = popen("wl-copy", "w");
+    if (!f) {
+        f = popen("xclip -selection clipboard", "w");
+    }
+    if (!f) {
+        f = popen("xsel -b", "w");
+    }
+
+    if (f) {
+        fputs(text, f);
+        pclose(f);
+    }
+}
+
+// System clipboard helper: tries wl-paste, xclip, then xsel
+int read_system_clipboard(char *buf, size_t max_len) {
+    FILE *f = popen("wl-paste --no-newline", "r");
+    if (!f) {
+        f = popen("xclip -out -selection clipboard", "r");
+    }
+    if (!f) {
+        f = popen("xsel -ob", "r");
+    }
+
+    if (f) {
+        size_t total = 0;
+        while (total < max_len - 1 && fgets(buf + total, max_len - total, f) != NULL) {
+            total = strlen(buf);
+        }
+        pclose(f);
+        return (total > 0);
+    }
+    return 0;
+}
+
 static void autocomplete_path(char *buffer, size_t *len, size_t max_len) {
     char dir_part[256] = ".";
     char file_prefix[128] = "";

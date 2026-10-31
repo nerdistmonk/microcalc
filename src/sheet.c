@@ -1,5 +1,9 @@
 #include "microcalc.h"
 
+// Forward declarations for system clipboard functions in io.c
+void write_system_clipboard(const char *text);
+int read_system_clipboard(char *buf, size_t max_len);
+
 void push_undo_state(void) {
     if (undo_top < MAX_UNDO) {
         memcpy(undo_stack[undo_top].grid_state, grid, sizeof(grid));
@@ -8,16 +12,44 @@ void push_undo_state(void) {
         memmove(&undo_stack[0], &undo_stack[1], sizeof(UndoState) * (MAX_UNDO - 1));
         memcpy(undo_stack[MAX_UNDO - 1].grid_state, grid, sizeof(grid));
     }
+    redo_top = 0;
 }
 
 void undo_action(void) {
     if (undo_top > 0) {
+        if (redo_top < MAX_UNDO) {
+            memcpy(redo_stack[redo_top].grid_state, grid, sizeof(grid));
+            redo_top++;
+        } else {
+            memmove(&redo_stack[0], &redo_stack[1], sizeof(UndoState) * (MAX_UNDO - 1));
+            memcpy(redo_stack[MAX_UNDO - 1].grid_state, grid, sizeof(grid));
+        }
+
         undo_top--;
         memcpy(grid, undo_stack[undo_top].grid_state, sizeof(grid));
         recalculate_all();
         snprintf(status_msg, sizeof(status_msg), " Undo successful. ");
     } else {
         snprintf(status_msg, sizeof(status_msg), " Nothing to undo! ");
+    }
+}
+
+void redo_action(void) {
+    if (redo_top > 0) {
+        if (undo_top < MAX_UNDO) {
+            memcpy(undo_stack[undo_top].grid_state, grid, sizeof(grid));
+            undo_top++;
+        } else {
+            memmove(&undo_stack[0], &undo_stack[1], sizeof(UndoState) * (MAX_UNDO - 1));
+            memcpy(undo_stack[MAX_UNDO - 1].grid_state, grid, sizeof(grid));
+        }
+
+        redo_top--;
+        memcpy(grid, redo_stack[redo_top].grid_state, sizeof(grid));
+        recalculate_all();
+        snprintf(status_msg, sizeof(status_msg), " Redo successful. ");
+    } else {
+        snprintf(status_msg, sizeof(status_msg), " Nothing to redo! ");
     }
 }
 
@@ -106,7 +138,40 @@ void copy_selection(void) {
         }
     }
     clipboard.is_active = 1;
-    snprintf(status_msg, sizeof(status_msg), " Copied %dx%d cells to clipboard. ", clipboard.rows, clipboard.cols);
+
+    // Serialize to TSV and push to system clipboard (Wayland / X11)
+    char tsv_buf[8192] = {0};
+    size_t offset = 0;
+    for (int r = 0; r < clipboard.rows && offset < sizeof(tsv_buf) - 1; r++) {
+        for (int c = 0; c < clipboard.cols && offset < sizeof(tsv_buf) - 1; c++) {
+            char disp[64];
+            Cell *cell = &clipboard.cells[r][c];
+            if (cell->text[0] != '\0') {
+                if (cell->is_formula) {
+                    snprintf(disp, sizeof(disp), "%g", cell->value);
+                } else {
+                    strncpy(disp, cell->text, sizeof(disp) - 1);
+                    disp[sizeof(disp) - 1] = '\0';
+                }
+            } else {
+                disp[0] = '\0';
+            }
+            int written = snprintf(tsv_buf + offset, sizeof(tsv_buf) - offset, "%s", disp);
+            if (written > 0) offset += written;
+
+            if (c < clipboard.cols - 1 && offset < sizeof(tsv_buf) - 1) {
+                tsv_buf[offset++] = '\t';
+                tsv_buf[offset] = '\0';
+            }
+        }
+        if (r < clipboard.rows - 1 && offset < sizeof(tsv_buf) - 1) {
+            tsv_buf[offset++] = '\n';
+            tsv_buf[offset] = '\0';
+        }
+    }
+    write_system_clipboard(tsv_buf);
+
+    snprintf(status_msg, sizeof(status_msg), " Copied %dx%d cells (internal & system). ", clipboard.rows, clipboard.cols);
 }
 
 void cut_selection(void) {
@@ -124,13 +189,57 @@ void cut_selection(void) {
     is_selecting = 0;
     is_all_selected = 0;
     recalculate_all();
-    snprintf(status_msg, sizeof(status_msg), " Cut %dx%d cells to clipboard. ", clipboard.rows, clipboard.cols);
+    snprintf(status_msg, sizeof(status_msg), " Cut %dx%d cells. ", clipboard.rows, clipboard.cols);
 }
 
 void paste_selection(void) {
+    // If internal clipboard is inactive, try loading from system clipboard as a TSV/CSV block
     if (!clipboard.is_active) {
-        snprintf(status_msg, sizeof(status_msg), " Error: Clipboard is empty! ");
-        return;
+        char sys_buf[8192] = {0};
+        if (read_system_clipboard(sys_buf, sizeof(sys_buf))) {
+            push_undo_state();
+            char *line = strtok(sys_buf, "\n");
+            int r = cursor_r;
+            int max_pasted_cols = 0;
+            int rows_pasted = 0;
+
+            while (line && r < MAX_ROWS) {
+                char *token = strtok(line, "\t");
+                if (!token) token = strtok(line, ","); // Fallback to comma if not TSV
+                int c = cursor_c;
+                int cols_in_row = 0;
+
+                while (token && c < MAX_COLS) {
+                    // Trim whitespaces
+                    while (*token == ' ' || *token == '\t') token++;
+                    char *end = token + strlen(token) - 1;
+                    while (end > token && (*end == ' ' || *end == '\t' || *end == '\r')) {
+                        *end = '\0';
+                        end--;
+                    }
+
+                    memset(&grid[r][c], 0, sizeof(Cell));
+                    strncpy(grid[r][c].text, token, sizeof(grid[r][c].text) - 1);
+
+                    token = strtok(NULL, "\t,");
+                    c++;
+                    cols_in_row++;
+                }
+                if (cols_in_row > max_pasted_cols) max_pasted_cols = cols_in_row;
+                line = strtok(NULL, "\n");
+                r++;
+                rows_pasted++;
+            }
+
+            is_selecting = 0;
+            is_all_selected = 0;
+            recalculate_all();
+            snprintf(status_msg, sizeof(status_msg), " Pasted %dx%d cells from system clipboard. ", rows_pasted, max_pasted_cols);
+            return;
+        } else {
+            snprintf(status_msg, sizeof(status_msg), " Error: Clipboard is empty! ");
+            return;
+        }
     }
 
     push_undo_state();
