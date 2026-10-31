@@ -1,15 +1,21 @@
-cmake_minimum_required(VERSION 3.16)
+cmake_minimum_required(VERSION 3.10)
 project(microcalc C)
 
-set(CMAKE_C_STANDARD 11)
+set(CMAKE_C_STANDARD 99)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 
-# Find ncurses package
-find_package(PkgConfig REQUIRED)
-pkg_check_modules(NCURSES REQUIRED ncurses)
+# Find the ncurses library
+find_package(Curses REQUIRED)
+include_directories(${CURSES_INCLUDE_DIR} src)
 
-include_directories(${NCURSES_INCLUDE_DIRS})
+# Define the executable and its source files inside src/
+add_executable(microcalc
+    src/main.c
+    src/formula.c
+    src/sheet.c
+    src/io.c
+    src/ui.c
+)
 
-add_executable(microcalc src/main.c)
-
-target_link_libraries(microcalc PRIVATE ${NCURSES_LIBRARIES})
+# Link ncurses and the math library (-lm)
+target_link_libraries(microcalc PRIVATE ${CURSES_LIBRARIES} m)
