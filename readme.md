@@ -9,7 +9,7 @@
 ## ✨ Features
 
 - **Blazing Fast TUI:** Built on `ncurses` with instant mouse response times (`mouseinterval(50)`).
-- **Advanced Formula Engine:** Supports arithmetic operations, cell references (`=A0+A1`), and range functions (`SUM`, `AVG`, `MAX`, `MIN`, `COUNT`) with automatic dependency resolution.
+- **Advanced Formula Engine:** Supports arithmetic operations, cell references (`=A0+A1`), and range functions (`SUM`, `AVG`, `MAX`, `MIN`, `COUNT`) with automatic dependency resolution. Features several methods of entering formulas, including a new shorthand variant where for example you can sum up cells by entering '=A0:A6', which would sum up cells A0 to A6. Or '=A0sA6' which will do the same thing, or '=SUM(A0:A6)', and so on.
 - **System Clipboard Integration:** Seamlessly copy and paste spreadsheet ranges as TSV/CSV blocks directly to/from your system clipboard (`wl-copy`/`wl-paste` for Wayland, or `xclip`/`xsel` for X11).
 - **Undo & Redo Stacks:** Full multi-level `Ctrl+Z` (Undo) and `Ctrl+R` (Redo) support.
 - **Printable PDF Export:** Export your sheet directly into a clean, standalone PDF document complete with dynamic column-width layout and Helvetica typography.
