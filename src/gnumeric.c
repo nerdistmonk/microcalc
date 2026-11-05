@@ -131,18 +131,33 @@ static int xl_call(Xlat *x, char *op, XlRange *args, int *nargs) {
     return 1;
 }
 
-/* A lone function over one range becomes a native range op: =SUM(A1:A3) -> =A0rsA2. */
+/* Emits one argument as a cell or a native range op: A1:A3 -> A0rsA2, B2 -> B1. */
+static void xl_emit_arg(Xlat *x, const XlRange *rg, char op) {
+    if (rg->r1 == rg->r2 && rg->c1 == rg->c2) {
+        xl_emit_cell(x, rg->r1, rg->c1);
+        return;
+    }
+    xl_emit_cell(x, rg->r1, rg->c1);
+    xl_emit(x, 'r');
+    xl_emit(x, op);
+    xl_emit_cell(x, rg->r2, rg->c2);
+}
+
+/* A lone function over one range becomes a native range op: =SUM(A1:A3) -> =A0rsA2.
+   SUM over several ranges chains them: =SUM(A1:A2,A4) -> =A0rsA1sA3. */
 static int xl_visual_call(Xlat *x) {
     XlRange args[XL_MAX_ARGS];
     int nargs = 0;
     char op;
-    if (!xl_call(x, &op, args, &nargs) || nargs != 1) return 0;
-    xl_emit_cell(x, args[0].r1, args[0].c1);
-    xl_emit(x, 'r');
-    xl_emit(x, op);
-    xl_emit_cell(x, args[0].r2, args[0].c2);
+    if (!xl_call(x, &op, args, &nargs)) return 0;
+    if (nargs != 1 && op != 's') return 0;
+    for (int i = 0; i < nargs; i++) {
+        if (i > 0) xl_emit(x, 's');
+        xl_emit_arg(x, &args[i], op);
+    }
     return 1;
 }
+
 
 /* SUM inside arithmetic expands to explicit cells, e.g. SUM(A1:A3) -> (A0+A1+A2).
    The other functions have no equivalent inside arithmetic, so they are rejected. */
