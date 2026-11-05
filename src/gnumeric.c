@@ -190,6 +190,7 @@ static int translate_formula(const char *src, char *out, size_t out_size) {
 typedef struct {
     Cell (*target)[MAX_COLS];
     int sheet_count;
+    int root_seen, root_ok;
     int in_first_sheet;
     int in_cells;
     int in_cell;
@@ -326,6 +327,11 @@ static void XMLCALL on_start(void *ud, const XML_Char *name, const XML_Char **at
     GnmState *st = ud;
     const char *n = local_name(name);
 
+    if (!st->root_seen) {
+        st->root_seen = 1;
+        st->root_ok = strcmp(n, "Workbook") == 0 && strstr(name, "http://www.gnumeric.org/") != NULL;
+    }
+
     if (strcmp(n, "Sheet") == 0) {
         st->sheet_count++;
         if (st->sheet_count == 1) st->in_first_sheet = 1;
@@ -419,7 +425,7 @@ void load_gnumeric(const char *filename) {
         }
         if (last) break;
     }
-    if (!failed && st.sheet_count == 0) failed = 1;
+    if (!failed && (!st.root_ok || st.sheet_count == 0)) failed = 1;
 
     XML_ParserFree(parser);
     gzclose(gz);
