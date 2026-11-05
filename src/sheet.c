@@ -192,41 +192,56 @@ void cut_selection(void) {
     snprintf(status_msg, sizeof(status_msg), " Cut %dx%d cells. ", clipboard.rows, clipboard.cols);
 }
 
+static void trim_clipboard_field(char **start) {
+    char *s = *start;
+    while (*s == ' ' || *s == '\t') s++;
+    size_t n = strlen(s);
+    while (n > 0 && (s[n - 1] == ' ' || s[n - 1] == '\t' || s[n - 1] == '\r')) {
+        s[--n] = '\0';
+    }
+    *start = s;
+}
+
 void paste_selection(void) {
     // If internal clipboard is inactive, try loading from system clipboard as a TSV/CSV block
     if (!clipboard.is_active) {
         char sys_buf[8192] = {0};
         if (read_system_clipboard(sys_buf, sizeof(sys_buf))) {
             push_undo_state();
-            char *line = strtok(sys_buf, "\n");
+
+            size_t len = strlen(sys_buf);
+            if (len > 0 && sys_buf[len - 1] == '\n') sys_buf[--len] = '\0';
+
+            char delim = strchr(sys_buf, '\t') ? '\t' : ',';
             int r = cursor_r;
             int max_pasted_cols = 0;
             int rows_pasted = 0;
+            char *row = sys_buf;
 
-            while (line && r < MAX_ROWS) {
-                char *token = strtok(line, "\t");
-                if (!token) token = strtok(line, ","); // Fallback to comma if not TSV
+            while (row && r < MAX_ROWS) {
+                char *next_row = strchr(row, '\n');
+                if (next_row) *next_row++ = '\0';
+
                 int c = cursor_c;
                 int cols_in_row = 0;
+                char *field = row;
 
-                while (token && c < MAX_COLS) {
-                    // Trim whitespaces
-                    while (*token == ' ' || *token == '\t') token++;
-                    char *end = token + strlen(token) - 1;
-                    while (end > token && (*end == ' ' || *end == '\t' || *end == '\r')) {
-                        *end = '\0';
-                        end--;
-                    }
+                while (field && c < MAX_COLS) {
+                    char *next_field = strchr(field, delim);
+                    if (next_field) *next_field++ = '\0';
+
+                    char *token = field;
+                    trim_clipboard_field(&token);
 
                     memset(&grid[r][c], 0, sizeof(Cell));
                     strncpy(grid[r][c].text, token, sizeof(grid[r][c].text) - 1);
 
-                    token = strtok(NULL, "\t,");
+                    field = next_field;
                     c++;
                     cols_in_row++;
                 }
                 if (cols_in_row > max_pasted_cols) max_pasted_cols = cols_in_row;
-                line = strtok(NULL, "\n");
+                row = next_row;
                 r++;
                 rows_pasted++;
             }

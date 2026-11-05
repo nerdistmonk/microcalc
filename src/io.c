@@ -1,40 +1,44 @@
 #include "microcalc.h"
+#include <signal.h>
+
+// popen() succeeds even when the command is missing, so success is judged by the exit status
+static int run_clipboard_writer(const char *cmd, const char *text) {
+    FILE *f = popen(cmd, "w");
+    if (!f) return 0;
+    fputs(text, f);
+    return pclose(f) == 0;
+}
+
+static int run_clipboard_reader(const char *cmd, char *buf, size_t max_len) {
+    FILE *f = popen(cmd, "r");
+    if (!f) return 0;
+    size_t total = 0;
+    while (total < max_len - 1 && fgets(buf + total, max_len - total, f) != NULL) {
+        total = strlen(buf);
+    }
+    int status = pclose(f);
+    return (status == 0 && total > 0);
+}
 
 // System clipboard helper: tries wl-copy, xclip, then xsel
 void write_system_clipboard(const char *text) {
-    FILE *f = popen("wl-copy", "w");
-    if (!f) {
-        f = popen("xclip -selection clipboard", "w");
+    // A writer that exits early must not kill the editor with SIGPIPE
+    void (*prev_sigpipe)(int) = signal(SIGPIPE, SIG_IGN);
+    if (!run_clipboard_writer("wl-copy 2>/dev/null", text) &&
+        !run_clipboard_writer("xclip -selection clipboard 2>/dev/null", text)) {
+        run_clipboard_writer("xsel -b 2>/dev/null", text);
     }
-    if (!f) {
-        f = popen("xsel -b", "w");
-    }
-
-    if (f) {
-        fputs(text, f);
-        pclose(f);
-    }
+    signal(SIGPIPE, prev_sigpipe);
 }
 
 // System clipboard helper: tries wl-paste, xclip, then xsel
 int read_system_clipboard(char *buf, size_t max_len) {
-    FILE *f = popen("wl-paste --no-newline", "r");
-    if (!f) {
-        f = popen("xclip -out -selection clipboard", "r");
-    }
-    if (!f) {
-        f = popen("xsel -ob", "r");
-    }
-
-    if (f) {
-        size_t total = 0;
-        while (total < max_len - 1 && fgets(buf + total, max_len - total, f) != NULL) {
-            total = strlen(buf);
-        }
-        pclose(f);
-        return (total > 0);
-    }
-    return 0;
+    buf[0] = '\0';
+    if (run_clipboard_reader("wl-paste --no-newline 2>/dev/null", buf, max_len)) return 1;
+    buf[0] = '\0';
+    if (run_clipboard_reader("xclip -out -selection clipboard 2>/dev/null", buf, max_len)) return 1;
+    buf[0] = '\0';
+    return run_clipboard_reader("xsel -ob 2>/dev/null", buf, max_len);
 }
 
 static void autocomplete_path(char *buffer, size_t *len, size_t max_len) {
@@ -181,53 +185,85 @@ void load_csv(const char *filename) {
 
     push_undo_state();
     memset(grid, 0, sizeof(grid));
-    char line[512];
+    char *line = NULL;
+    size_t line_cap = 0;
+    ssize_t line_len;
     int r = 0;
 
-    while (fgets(line, sizeof(line), f) && r < MAX_ROWS) {
-        int c = 0;
+    while (r < MAX_ROWS && (line_len = getline(&line, &line_cap, f)) != -1) {
+        while (line_len > 0 && (line[line_len - 1] == '\n' || line[line_len - 1] == '\r')) {
+            line[--line_len] = '\0';
+        }
+
+        char *field = malloc((size_t)line_len + 1);
+        if (!field) break;
+
         char *ptr = line;
+        int c = 0;
+        while (c < MAX_COLS) {
+            size_t idx = 0;
 
-        while (*ptr && *ptr != '\r' && *ptr != '\n' && c < MAX_COLS) {
-            char cell_buf[64] = {0};
-            int idx = 0;
-            int in_quotes = 0;
-
-            while (*ptr && idx < (int)sizeof(cell_buf) - 1) {
-                if (*ptr == '"') {
-                    in_quotes = !in_quotes;
-                } else if (*ptr == ',' && !in_quotes) {
-                    ptr++;
-                    break;
-                } else if ((*ptr == '\r' || *ptr == '\n') && !in_quotes) {
-                    break;
-                } else {
-                    cell_buf[idx++] = *ptr;
-                }
+            if (*ptr == '"') {
                 ptr++;
+                while (*ptr) {
+                    if (*ptr == '"' && ptr[1] == '"') {
+                        field[idx++] = '"';
+                        ptr += 2;
+                    } else if (*ptr == '"') {
+                        ptr++;
+                        break;
+                    } else {
+                        field[idx++] = *ptr++;
+                    }
+                }
+                while (*ptr && *ptr != ',') ptr++;
+            } else {
+                while (*ptr && *ptr != ',') {
+                    field[idx++] = *ptr++;
+                }
             }
-            cell_buf[idx] = '\0';
+            field[idx] = '\0';
 
-            char *start = cell_buf;
+            char *start = field;
             while (*start == ' ' || *start == '\t') start++;
-            char *end = start + strlen(start) - 1;
-            while (end > start && (*end == ' ' || *end == '\t' || *end == '\r' || *end == '\n')) {
-                *end = '\0';
-                end--;
+            size_t n = strlen(start);
+            while (n > 0 && (start[n - 1] == ' ' || start[n - 1] == '\t')) {
+                start[--n] = '\0';
             }
 
-            if (strlen(start) > 0) {
+            if (n > 0) {
                 strncpy(grid[r][c].text, start, sizeof(grid[r][c].text) - 1);
             }
 
             c++;
+            if (*ptr == ',') {
+                ptr++;
+            } else {
+                break;
+            }
         }
+
+        free(field);
         r++;
     }
 
+    free(line);
     fclose(f);
     recalculate_all();
     snprintf(status_msg, sizeof(status_msg), " Successfully loaded CSV from %s ", filename);
+}
+
+static void write_csv_field(FILE *f, const char *text) {
+    if (!strpbrk(text, ",\"\r\n")) {
+        fputs(text, f);
+        return;
+    }
+    fputc('"', f);
+    for (const char *p = text; *p; p++) {
+        if (*p == '"') fputc('"', f);
+        fputc(*p, f);
+    }
+    fputc('"', f);
 }
 
 void save_csv(const char *filename) {
@@ -249,12 +285,11 @@ void save_csv(const char *filename) {
 
     for (int r = 0; r <= max_r; r++) {
         for (int c = 0; c <= max_c; c++) {
-            if (grid[r][c].text[0] != '\0') {
-                if (strchr(grid[r][c].text, ',')) {
-                    fprintf(f, "\"%s\"", grid[r][c].text);
-                } else {
-                    fprintf(f, "%s", grid[r][c].text);
-                }
+            Cell *cell = &grid[r][c];
+            if (cell->is_formula) {
+                fprintf(f, "%.15g", cell->value);
+            } else if (cell->text[0] != '\0') {
+                write_csv_field(f, cell->text);
             }
             if (c < max_c) fprintf(f, ",");
         }
