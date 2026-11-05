@@ -68,6 +68,19 @@ void edit_cell(void) {
     status_msg[0] = '\0';
 }
 
+static void print_cell_fit(const char *s, int w, int numeric) {
+    int len = (int)strlen(s);
+    if (len <= w) {
+        printw("%*s", w, s);
+    } else if (numeric) {
+        for (int i = 0; i < w; i++) addch('#');
+    } else {
+        int cut = w;
+        while (cut > 0 && (s[cut] & 0xC0) == 0x80) cut--;
+        printw("%.*s", cut, s);
+    }
+}
+
 void draw_grid(void) {
     clear();
 
@@ -182,9 +195,11 @@ void draw_grid(void) {
             if (grid[actual_r][c].text[0] == '\0') {
                 printw("%*s", w, "");
             } else if (grid[actual_r][c].is_formula && !grid[actual_r][c].is_invalid) {
-                printw("%*g", w, grid[actual_r][c].value);
+                char num[64];
+                snprintf(num, sizeof(num), "%g", grid[actual_r][c].value);
+                print_cell_fit(num, w, 1);
             } else {
-                printw("%*s", w, grid[actual_r][c].text);
+                print_cell_fit(grid[actual_r][c].text, w, 0);
             }
 
             if (is_cursor) {

@@ -321,7 +321,7 @@ void save_sheet(const char *filename) {
 
     for (int r = 0; r < MAX_ROWS; r++) {
         for (int c = 0; c < MAX_COLS; c++) {
-            if (grid[r][c].text[0] != '\0') {
+            if (grid[r][c].text[0] != '\0' || grid[r][c].color_state != 0) {
                 fprintf(f, "%d|%d|%d|%s\n", r, c, grid[r][c].color_state, grid[r][c].text);
             }
         }
@@ -354,19 +354,15 @@ void load_sheet(const char *filename) {
     memset(grid, 0, sizeof(grid));
 
     int r, c, col_st;
-    char buffer[64];
-    while (1) {
-        int scanned = fscanf(f, "%d|%d|%d|%63[^\n]", &r, &c, &col_st, buffer);
-        if (scanned == 4) {
-            size_t len = strlen(buffer);
-            if (len > 0 && buffer[len - 1] == '\r') buffer[len - 1] = '\0';
-            if (r >= 0 && r < MAX_ROWS && c >= 0 && c < MAX_COLS) {
-                strncpy(grid[r][c].text, buffer, sizeof(grid[r][c].text) - 1);
-                grid[r][c].color_state = col_st;
-            }
-            fgetc(f);
-        } else {
-            break;
+    char line[160];
+    while (fgets(line, sizeof(line), f)) {
+        int n = 0;
+        if (sscanf(line, "%d|%d|%d|%n", &r, &c, &col_st, &n) != 3 || n == 0) break;
+        char *text = line + n;
+        text[strcspn(text, "\r\n")] = '\0';
+        if (r >= 0 && r < MAX_ROWS && c >= 0 && c < MAX_COLS) {
+            strncpy(grid[r][c].text, text, sizeof(grid[r][c].text) - 1);
+            grid[r][c].color_state = col_st;
         }
     }
 
@@ -473,78 +469,127 @@ void export_pdf(const char *filename) {
         pdf_col_widths[c] = (max_len > 0) ? (max_len * 7.0f + 14.0f) : 40.0f;
     }
 
-    long obj_offsets[6];
+    const float x_start = 40.0f;
+    const float x_limit = 612.0f - 40.0f;
+    const float start_y = 720.0f;
+    const float row_h = 18.0f;
+    const float bottom_margin = 36.0f;
+    int rows_per_page = (int)((start_y - bottom_margin) / row_h);
+    int total_rows = max_r + 1;
+
+    int col_group_first[MAX_COLS], col_group_last[MAX_COLS];
+    int n_col_groups = 0;
+    int c = 0;
+    while (c <= max_c) {
+        int first = c;
+        float acc = 0.0f;
+        while (c <= max_c && (c == first || acc + pdf_col_widths[c] <= x_limit - x_start)) {
+            acc += pdf_col_widths[c];
+            c++;
+        }
+        col_group_first[n_col_groups] = first;
+        col_group_last[n_col_groups] = c - 1;
+        n_col_groups++;
+    }
+
+    int n_row_groups = (total_rows + rows_per_page - 1) / rows_per_page;
+    int n_pages = n_row_groups * n_col_groups;
+    int n_objs = 3 + 2 * n_pages;
+
+    long *obj_offsets = malloc(sizeof(long) * (size_t)(n_objs + 1));
+    if (!obj_offsets) {
+        fclose(f);
+        snprintf(status_msg, sizeof(status_msg), " Error: Could not generate PDF. ");
+        return;
+    }
+
     fprintf(f, "%%PDF-1.4\n");
 
     obj_offsets[1] = ftell(f);
     fprintf(f, "1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n");
 
     obj_offsets[2] = ftell(f);
-    fprintf(f, "2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n");
+    fprintf(f, "2 0 obj\n<< /Type /Pages /Kids [");
+    for (int p = 0; p < n_pages; p++) fprintf(f, " %d 0 R", 4 + 2 * p);
+    fprintf(f, " ] /Count %d >>\nendobj\n", n_pages);
 
     obj_offsets[3] = ftell(f);
-    fprintf(f, "3 0 obj\n<< /Type /Page /Parent 2 0 R /Resources << /Font << /F1 4 0 R >> >> /MediaBox [0 0 612 792] /Contents 5 0 R >>\nendobj\n");
+    fprintf(f, "3 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>\nendobj\n");
 
-    obj_offsets[4] = ftell(f);
-    fprintf(f, "4 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>\nendobj\n");
+    for (int p = 0; p < n_pages; p++) {
+        int page_obj = 4 + 2 * p;
+        int content_obj = page_obj + 1;
+        int row0 = (p / n_col_groups) * rows_per_page;
+        int row1 = row0 + rows_per_page;
+        if (row1 > total_rows) row1 = total_rows;
+        int col0 = col_group_first[p % n_col_groups];
+        int col1 = col_group_last[p % n_col_groups];
 
-    obj_offsets[5] = ftell(f);
-    long header_pos = ftell(f);
-    fprintf(f, "5 0 obj\n<< /Length 00000000 >>\nstream\n");
-    long content_start = ftell(f);
+        obj_offsets[page_obj] = ftell(f);
+        fprintf(f, "%d 0 obj\n<< /Type /Page /Parent 2 0 R /Resources << /Font << /F1 3 0 R >> >> /MediaBox [0 0 612 792] /Contents %d 0 R >>\nendobj\n", page_obj, content_obj);
 
-    char escaped_title[128];
-    escape_pdf_string(title_buf, escaped_title, sizeof(escaped_title));
-    fprintf(f, "BT /F1 14 Tf 1 0 0 1 40 750 Tm (%s SPREADSHEET) Tj ET\n", escaped_title);
+        obj_offsets[content_obj] = ftell(f);
+        long header_pos = obj_offsets[content_obj];
+        fprintf(f, "%d 0 obj\n<< /Length 00000000 >>\nstream\n", content_obj);
+        long content_start = ftell(f);
 
-    float start_y = 720.0f;
-    float row_h = 18.0f;
-
-    for (int r = 0; r <= max_r; r++) {
-        float x_acc = 40.0f;
-        float y = start_y - (r * row_h);
-        for (int c = 0; c <= max_c; c++) {
-            float col_w = pdf_col_widths[c];
-            fprintf(f, "0.5 w %.1f %.1f %.1f %.1f re S\n", x_acc, y - row_h, col_w, row_h);
-            x_acc += col_w;
+        char page_title[128];
+        if (n_pages > 1) {
+            snprintf(page_title, sizeof(page_title), "%s SPREADSHEET (PAGE %d OF %d)", title_buf, p + 1, n_pages);
+        } else {
+            snprintf(page_title, sizeof(page_title), "%s SPREADSHEET", title_buf);
         }
-    }
+        char escaped_title[192];
+        escape_pdf_string(page_title, escaped_title, sizeof(escaped_title));
+        fprintf(f, "BT /F1 14 Tf 1 0 0 1 40 750 Tm (%s) Tj ET\n", escaped_title);
 
-    fprintf(f, "BT /F1 9 Tf\n");
-    for (int r = 0; r <= max_r; r++) {
-        float x_acc = 40.0f;
-        float y = start_y - (r * row_h);
-        for (int c = 0; c <= max_c; c++) {
-            float col_w = pdf_col_widths[c];
-            char disp[64];
-            get_cell_display_text(r, c, disp, sizeof(disp));
-            if (disp[0] != '\0') {
-                char escaped_val[128] = {0};
-                escape_pdf_string(disp, escaped_val, sizeof(escaped_val));
-                fprintf(f, "1 0 0 1 %.1f %.1f Tm (%s) Tj\n", x_acc + 4.0f, y - 13.0f, escaped_val);
+        for (int r = row0; r < row1; r++) {
+            float x_acc = x_start;
+            float y = start_y - ((r - row0) * row_h);
+            for (int cc = col0; cc <= col1; cc++) {
+                float col_w = pdf_col_widths[cc];
+                fprintf(f, "0.5 w %.1f %.1f %.1f %.1f re S\n", x_acc, y - row_h, col_w, row_h);
+                x_acc += col_w;
             }
-            x_acc += col_w;
         }
+
+        fprintf(f, "BT /F1 9 Tf\n");
+        for (int r = row0; r < row1; r++) {
+            float x_acc = x_start;
+            float y = start_y - ((r - row0) * row_h);
+            for (int cc = col0; cc <= col1; cc++) {
+                float col_w = pdf_col_widths[cc];
+                char disp[64];
+                get_cell_display_text(r, cc, disp, sizeof(disp));
+                if (disp[0] != '\0') {
+                    char escaped_val[128] = {0};
+                    escape_pdf_string(disp, escaped_val, sizeof(escaped_val));
+                    fprintf(f, "1 0 0 1 %.1f %.1f Tm (%s) Tj\n", x_acc + 4.0f, y - 13.0f, escaped_val);
+                }
+                x_acc += col_w;
+            }
+        }
+        fprintf(f, "ET\n");
+
+        long content_end = ftell(f);
+        long stream_len = content_end - content_start;
+
+        fseek(f, header_pos, SEEK_SET);
+        fprintf(f, "%d 0 obj\n<< /Length %08ld >>\nstream\n", content_obj, stream_len);
+        fseek(f, content_end, SEEK_SET);
+        fprintf(f, "\nendstream\nendobj\n");
     }
-    fprintf(f, "ET\n");
-
-    long content_end = ftell(f);
-    long stream_len = content_end - content_start;
-
-    fseek(f, header_pos, SEEK_SET);
-    fprintf(f, "5 0 obj\n<< /Length %08ld >>\nstream\n", stream_len);
-    fseek(f, content_end, SEEK_SET);
-    fprintf(f, "\nendstream\nendobj\n");
 
     long xref_pos = ftell(f);
-    fprintf(f, "xref\n0 6\n");
+    fprintf(f, "xref\n0 %d\n", n_objs + 1);
     fprintf(f, "0000000000 65535 f \n");
-    for (int i = 1; i <= 5; i++) {
+    for (int i = 1; i <= n_objs; i++) {
         fprintf(f, "%010ld 00000 n \n", obj_offsets[i]);
     }
 
-    fprintf(f, "trailer\n<< /Size 6 /Root 1 0 R >>\nstartxref\n%ld\n%%%%EOF\n", xref_pos);
+    fprintf(f, "trailer\n<< /Size %d /Root 1 0 R >>\nstartxref\n%ld\n%%%%EOF\n", n_objs + 1, xref_pos);
 
+    free(obj_offsets);
     fclose(f);
     snprintf(status_msg, sizeof(status_msg), " Successfully exported PDF to %s ", pdf_name);
 }
