@@ -44,7 +44,7 @@
 ### File I/O & Extras
 | Control | Action |
 | :--- | :--- |
-| **Ctrl + S / Ctrl + O** | Save / Open (`.mc` native or `.csv`; open also accepts `.gnumeric` / `.gnm` / `.xml`) |
+| **Ctrl + S / Ctrl + O / Ctrl + L** | Save / Open (`.mc` native or `.csv`; open also accepts `.gnumeric` / `.gnm` / `.xml`). Ctrl+L also opens |
 | **Ctrl + P** | Export printable sheet as a PDF document |
 | **Ctrl + H** | Open built-in help cheatsheet |
 | **q / Q** | Quit application |

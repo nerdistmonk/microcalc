@@ -149,6 +149,7 @@ int main(int argc, char *argv[]) {
                 prompt_save();
                 break;
             case CTRL('o'):
+            case CTRL('l'):
                 prompt_load();
                 break;
             case CTRL('h'):
