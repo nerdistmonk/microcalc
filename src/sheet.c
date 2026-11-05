@@ -68,14 +68,14 @@ void cleanup_selection_format(void) {
         int has_decimal = 0;
 
         for (int r = min_r; r <= max_r; r++) {
-            if (grid[r][c].text[0] != '\0' && grid[r][c].text[0] != '=' && is_pure_number(grid[r][c].text)) {
+            if (grid[r][c].text[0] != '\0' && grid[r][c].text[0] != '=' && is_plain_number(grid[r][c].text)) {
                 if (strchr(grid[r][c].text, '$')) has_dollar = 1;
                 if (strchr(grid[r][c].text, '.')) has_decimal = 1;
             }
         }
 
         for (int r = min_r; r <= max_r; r++) {
-            if (grid[r][c].text[0] != '\0' && grid[r][c].text[0] != '=' && is_pure_number(grid[r][c].text)) {
+            if (grid[r][c].text[0] != '\0' && grid[r][c].text[0] != '=' && is_plain_number(grid[r][c].text)) {
                 double val = parse_number(grid[r][c].text);
                 if (has_dollar) {
                     if (val < 0) {

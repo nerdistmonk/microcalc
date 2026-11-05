@@ -67,6 +67,7 @@ extern const char *HELP_LINE_2;
 // Function Prototypes
 double parse_number(const char *str);
 int is_pure_number(const char *str);
+int is_plain_number(const char *str);
 int get_col_width(int c);
 void get_selected_range(int *min_r, int *max_r, int *min_c, int *max_c);
 int is_cell_selected(int r, int c);

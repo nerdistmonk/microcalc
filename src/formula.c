@@ -28,7 +28,7 @@ double parse_number(const char *str) {
 }
 
 int is_pure_number(const char *str) {
-    int has_digit = 0, has_dot = 0, has_sign = 0, has_dollar = 0;
+    int has_digit = 0, has_dot = 0, has_sign = 0, has_dollar = 0, has_percent = 0;
     int group = 0, commas = 0;
     for (; *str; str++) {
         char ch = *str;
@@ -46,9 +46,17 @@ int is_pure_number(const char *str) {
         } else if (ch == '-' || ch == '+' || ch == '(') {
             if (has_digit || has_sign) return 0;
             has_sign = 1;
-        } else if (ch == '$') {
+        } else if (ch == '$' || (ch == '\xE2' && str[1] == '\x82' && str[2] == '\xAC')) {
             if (has_digit || has_dollar) return 0;
             has_dollar = 1;
+            if (ch != '$') str += 2;
+        } else if (ch == '%') {
+            if (!has_digit || has_percent) return 0;
+            has_percent = 1;
+            for (const char *q = str + 1; *q; q++) {
+                if (*q != ' ') return 0;
+            }
+            break;
         } else if (ch == ')') {
             if (str[1] != '\0') return 0;
         } else if (ch == ' ') {
@@ -64,6 +72,10 @@ int is_pure_number(const char *str) {
     }
     if (commas > 0 && group != 3) return 0;
     return has_digit;
+}
+
+int is_plain_number(const char *str) {
+    return is_pure_number(str) && !strchr(str, '%') && !strstr(str, "\xE2\x82\xAC");
 }
 
 int get_col_width(int c) {
@@ -139,7 +151,7 @@ static double eval_range(const char *func, int r1, int c1, int r2, int c2) {
             if (r == cur_eval_r && c == cur_eval_c) continue;
 
             if (r >= 0 && r < MAX_ROWS && c >= 0 && c < MAX_COLS) {
-                if (grid[r][c].text[0] != '\0') {
+                if (grid[r][c].text[0] == '=' ? !grid[r][c].is_invalid : is_pure_number(grid[r][c].text)) {
                     double val = grid[r][c].value;
                     sum += val;
                     count++;
@@ -165,8 +177,9 @@ static double eval_range(const char *func, int r1, int c1, int r2, int c2) {
 }
 
 static double parse_expr(Parser *p);
+static double parse_factor(Parser *p);
 
-static double parse_factor(Parser *p) {
+static double parse_primary(Parser *p) {
     skip_whitespace(p);
 
     if (p->src[p->pos] == '+') {
@@ -241,6 +254,17 @@ static double parse_factor(Parser *p) {
     return 0.0;
 }
 
+static double parse_factor(Parser *p) {
+    double val = parse_primary(p);
+    for (;;) {
+        skip_whitespace(p);
+        if (p->src[p->pos] != '%') break;
+        p->pos++;
+        val /= 100.0;
+    }
+    return val;
+}
+
 static double parse_term(Parser *p) {
     double left = parse_factor(p);
     while (1) {
@@ -294,7 +318,19 @@ static void v_skip(const char *s, int *p) {
 
 static int v_expr(const char *s, int *p);
 
+static int v_primary(const char *s, int *p);
+
 static int v_factor(const char *s, int *p) {
+    if (!v_primary(s, p)) return 0;
+    for (;;) {
+        v_skip(s, p);
+        if (s[*p] != '%') break;
+        (*p)++;
+    }
+    return 1;
+}
+
+static int v_primary(const char *s, int *p) {
     v_skip(s, p);
     char ch = s[*p];
 
@@ -452,7 +488,12 @@ void eval_cell(int r, int c) {
         grid[r][c].value = parse_expr(&p);
     } else {
         grid[r][c].is_formula = 0;
-        grid[r][c].value = parse_number(grid[r][c].text);
+        if (is_pure_number(grid[r][c].text)) {
+            double v = parse_number(grid[r][c].text);
+            grid[r][c].value = strchr(grid[r][c].text, '%') ? v / 100.0 : v;
+        } else {
+            grid[r][c].value = 0.0;
+        }
     }
 }
 
