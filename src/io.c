@@ -286,7 +286,9 @@ void save_csv(const char *filename) {
     for (int r = 0; r <= max_r; r++) {
         for (int c = 0; c <= max_c; c++) {
             Cell *cell = &grid[r][c];
-            if (cell->is_formula) {
+            if (cell->is_value_error || cell->is_invalid) {
+                fprintf(f, "#VALUE!");
+            } else if (cell->is_formula) {
                 fprintf(f, "%.15g", cell->value);
             } else if (cell->text[0] != '\0') {
                 write_csv_field(f, cell->text);
@@ -415,7 +417,7 @@ static void escape_pdf_string(const char *src, char *dest, size_t dest_size) {
 static void get_cell_display_text(int r, int c, char *out, size_t max_len) {
     if (grid[r][c].text[0] == '\0') {
         out[0] = '\0';
-    } else if (grid[r][c].is_value_error) {
+    } else if (grid[r][c].is_value_error || grid[r][c].is_invalid) {
         strcpy(out, "#VALUE!");
     } else if (grid[r][c].is_formula) {
         snprintf(out, max_len, "%g", grid[r][c].value);
