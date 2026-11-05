@@ -195,6 +195,8 @@ void draw_grid(void) {
 
             if (grid[actual_r][c].text[0] == '\0') {
                 printw("%*s", w, "");
+            } else if (grid[actual_r][c].is_tilt) {
+                print_cell_fit("#TILT", w, 0);
             } else if (grid[actual_r][c].is_value_error) {
                 print_cell_fit("#VALUE!", w, 0);
             } else if (grid[actual_r][c].is_formula && !grid[actual_r][c].is_invalid) {

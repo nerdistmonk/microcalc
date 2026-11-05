@@ -126,6 +126,7 @@ int is_cell_selected(int r, int c) {
 }
 
 static int eval_error = 0;
+static int eval_tilt = 0;
 
 static int ref_is_error(int r, int c) {
     const Cell *cell = &grid[r][c];
@@ -137,6 +138,7 @@ static int ref_is_error(int r, int c) {
 static void set_formula_result(int r, int c, double v) {
     if (eval_error) {
         grid[r][c].is_value_error = 1;
+        grid[r][c].is_tilt = eval_tilt;
         grid[r][c].value = 0.0;
     } else {
         grid[r][c].value = v;
@@ -176,7 +178,10 @@ static void acc_cell(RangeAcc *a, int r, int c) {
             if (val > a->max_val) a->max_val = val;
             if (val < a->min_val) a->min_val = val;
             if (a->seq_op == 'S') a->seq -= val;
-            else if (a->seq_op == 'd') a->seq = (val != 0.0) ? (a->seq / val) : 0.0;
+            else if (a->seq_op == 'd') {
+                if (val == 0.0) { eval_tilt = 1; eval_error = 1; }
+                a->seq = (val != 0.0) ? (a->seq / val) : 0.0;
+            }
         }
         a->count++;
     }
@@ -346,7 +351,11 @@ static int ev_expr(Ev *e, double *out) {
         if (op == 's' || op == '+') acc += right;
         else if (op == 'S' || op == '-') acc -= right;
         else if (op == 'x' || op == '*') acc *= right;
-        else acc = (right != 0.0) ? (acc / right) : 0.0;
+        else if (right != 0.0) acc = acc / right;
+        else {
+            if (e->eval) { eval_tilt = 1; eval_error = 1; }
+            acc = 0.0;
+        }
     }
     *out = acc;
     return 1;
@@ -365,7 +374,9 @@ void eval_cell(int r, int c) {
     cur_eval_c = c;
     grid[r][c].is_invalid = 0;
     grid[r][c].is_value_error = 0;
+    grid[r][c].is_tilt = 0;
     eval_error = 0;
+    eval_tilt = 0;
 
     if (grid[r][c].text[0] == '=') {
         grid[r][c].is_formula = 1;

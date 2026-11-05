@@ -25,6 +25,7 @@ typedef struct {
     int is_formula;
     int is_invalid;
     int is_value_error; // formula result is #VALUE! (text or error in a reference)
+    int is_tilt; // divide by zero: shows #TILT (also sets is_value_error)
     int color_state; // 0: Normal, 1: Green (+), 2: Red (-)
 } Cell;
 
