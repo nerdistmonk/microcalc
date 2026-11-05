@@ -61,6 +61,7 @@ extern int sel_end_r;
 extern int sel_end_c;
 extern int is_selecting;
 extern int cursor_flash_error;
+extern int cursor_blink_phase;
 extern char status_msg[128];
 
 extern const char *HELP_LINE_1;

@@ -172,9 +172,11 @@ void draw_grid(void) {
             int w = col_widths[c];
             int is_cursor = (actual_r == cursor_r && c == cursor_c);
             int selected = is_cell_selected(actual_r, c);
+            int cursor_red = cursor_flash_error ||
+                (cursor_blink_phase && (grid[actual_r][c].is_invalid || grid[actual_r][c].is_value_error));
 
             if (is_cursor) {
-                if (cursor_flash_error) {
+                if (cursor_red) {
                     attron(COLOR_PAIR(7) | A_BOLD);
                 } else {
                     attron(COLOR_PAIR(2) | A_BOLD);
@@ -208,7 +210,7 @@ void draw_grid(void) {
             }
 
             if (is_cursor) {
-                attroff(cursor_flash_error ? (COLOR_PAIR(7) | A_BOLD) : (COLOR_PAIR(2) | A_BOLD));
+                attroff(cursor_red ? (COLOR_PAIR(7) | A_BOLD) : (COLOR_PAIR(2) | A_BOLD));
             } else if (selected || is_all_selected) {
                 attroff(COLOR_PAIR(4) | A_REVERSE);
             } else {

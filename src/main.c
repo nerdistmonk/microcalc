@@ -26,6 +26,11 @@ int sel_end_c = -1;
 int is_selecting = 0;
 
 int cursor_flash_error = 0;
+int cursor_blink_phase = 0;
+
+static int cursor_on_error(void) {
+    return grid[cursor_r][cursor_c].is_invalid || grid[cursor_r][cursor_c].is_value_error;
+}
 
 const char *HELP_LINE_1 = " Nav: Arrows | Click: Select | RClick: Range | Ctrl+A: All | Ctrl+Z: Undo | Ctrl+R: Redo | Del: Clear ";
 const char *HELP_LINE_2 = " Ctrl+C/X/V: Copy/Cut/Paste | Ctrl+F: Format | Ctrl+P: PDF | Ctrl+S/O: Save/Open | Ctrl+H: Help ";
@@ -85,7 +90,14 @@ int main(int argc, char *argv[]) {
     int ch;
     while (1) {
         draw_grid();
+        timeout(cursor_on_error() ? 500 : -1);
         ch = getch();
+        timeout(-1);
+        if (ch == ERR) {
+            cursor_blink_phase = !cursor_blink_phase;
+            continue;
+        }
+        cursor_blink_phase = 0;
 
         status_msg[0] = '\0';
 
