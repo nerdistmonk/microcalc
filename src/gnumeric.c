@@ -98,45 +98,23 @@ static int xl_arg(Xlat *x) {
     return 1;
 }
 
-/* SUM(a, b, ...) becomes (SUM(a)+SUM(b)+...), which Microcalc can evaluate; other functions take one argument. */
+/* Function calls keep their argument list, e.g. SUM(A1:A3,B2), which Microcalc evaluates directly. */
 static int xl_function(Xlat *x, const char *name_start, size_t name_len) {
     const char *canonical = xl_function_name(name_start, name_len);
     if (!canonical) return 0;
     x->p += name_len + 1; /* skip name and '(' */
-
-    if (strcmp(canonical, "SUM") != 0) {
-        xl_emit_str(x, canonical);
-        xl_emit(x, '(');
-        if (!xl_arg(x) || *x->p != ')') return 0;
-        xl_emit(x, ')');
-        x->p++;
-        return 1;
-    }
-
-    size_t start = x->n;
-    int args = 0;
-    for (;;) {
-        if (args > 0) xl_emit(x, '+');
-        xl_emit_str(x, "SUM(");
+    xl_emit_str(x, canonical);
+    xl_emit(x, '(');
+    for (int args = 0;; args++) {
+        if (args > 0) xl_emit(x, ',');
         if (!xl_arg(x)) return 0;
-        xl_emit(x, ')');
-        args++;
+        xl_skip(x);
         if (*x->p != ',') break;
         x->p++;
     }
     if (*x->p != ')') return 0;
+    xl_emit(x, ')');
     x->p++;
-
-    if (args > 1) {
-        if (x->n + 2 >= sizeof x->out) {
-            x->ok = 0;
-            return 0;
-        }
-        memmove(x->out + start + 1, x->out + start, x->n - start + 1);
-        x->out[start] = '(';
-        x->n++;
-        xl_emit(x, ')');
-    }
     return 1;
 }
 

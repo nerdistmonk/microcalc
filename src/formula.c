@@ -155,14 +155,16 @@ static void set_formula_result(int r, int c, double v) {
     }
 }
 
-static double eval_range(const char *func, int r1, int c1, int r2, int c2) {
+typedef struct {
+    double sum, max_val, min_val;
+    int count, first;
+} RangeAcc;
+
+static void acc_range(RangeAcc *a, int r1, int c1, int r2, int c2) {
     int min_r = (r1 < r2) ? r1 : r2;
     int max_r = (r1 > r2) ? r1 : r2;
     int min_c = (c1 < c2) ? c1 : c2;
     int max_c = (c1 > c2) ? c1 : c2;
-
-    double sum = 0.0, max_val = 0.0, min_val = 0.0;
-    int count = 0, first = 1;
 
     for (int r = min_r; r <= max_r; r++) {
         for (int c = min_c; c <= max_c; c++) {
@@ -175,27 +177,62 @@ static double eval_range(const char *func, int r1, int c1, int r2, int c2) {
                 }
                 if (grid[r][c].text[0] == '=' ? !grid[r][c].is_invalid : is_pure_number(grid[r][c].text)) {
                     double val = grid[r][c].value;
-                    sum += val;
-                    count++;
-                    if (first) {
-                        max_val = min_val = val;
-                        first = 0;
+                    a->sum += val;
+                    a->count++;
+                    if (a->first) {
+                        a->max_val = a->min_val = val;
+                        a->first = 0;
                     } else {
-                        if (val > max_val) max_val = val;
-                        if (val < min_val) min_val = val;
+                        if (val > a->max_val) a->max_val = val;
+                        if (val < a->min_val) a->min_val = val;
                     }
                 }
             }
         }
     }
+}
 
-    if (strcasecmp(func, "SUM") == 0 || strcmp(func, "s") == 0) return sum;
-    if (strcasecmp(func, "AVG") == 0 || strcasecmp(func, "AVERAGE") == 0 || strcmp(func, "a") == 0) return (count > 0) ? (sum / count) : 0.0;
-    if (strcasecmp(func, "MAX") == 0 || strcmp(func, "M") == 0) return (count > 0) ? max_val : 0.0;
-    if (strcasecmp(func, "MIN") == 0 || strcmp(func, "m") == 0) return (count > 0) ? min_val : 0.0;
-    if (strcasecmp(func, "COUNT") == 0 || strcmp(func, "c") == 0) return (double)count;
+static double acc_result(const char *func, const RangeAcc *a) {
+    if (strcasecmp(func, "SUM") == 0 || strcmp(func, "s") == 0) return a->sum;
+    if (strcasecmp(func, "AVG") == 0 || strcasecmp(func, "AVERAGE") == 0 || strcmp(func, "a") == 0) return (a->count > 0) ? (a->sum / a->count) : 0.0;
+    if (strcasecmp(func, "MAX") == 0 || strcmp(func, "M") == 0) return (a->count > 0) ? a->max_val : 0.0;
+    if (strcasecmp(func, "MIN") == 0 || strcmp(func, "m") == 0) return (a->count > 0) ? a->min_val : 0.0;
+    if (strcasecmp(func, "COUNT") == 0 || strcmp(func, "c") == 0) return (double)a->count;
 
-    return sum;
+    return a->sum;
+}
+
+static double eval_range(const char *func, int r1, int c1, int r2, int c2) {
+    RangeAcc a = { 0.0, 0.0, 0.0, 0, 1 };
+    acc_range(&a, r1, c1, r2, c2);
+    return acc_result(func, &a);
+}
+
+/* Reads "ref" or "ref:ref" items separated by commas, up to the closing parenthesis. */
+static int parse_range_list(Parser *p, RangeAcc *a) {
+    for (;;) {
+        skip_whitespace(p);
+        const char *s = p->src + p->pos;
+        char c1 = '\0', c2 = '\0';
+        int r1 = -1, r2 = -1, n = 0;
+        if (sscanf(s, " %c%d : %c%d%n", &c1, &r1, &c2, &r2, &n) != 4) {
+            n = 0;
+            if (sscanf(s, " %c%d%n", &c1, &r1, &n) != 2) return 0;
+            c2 = c1;
+            r2 = r1;
+        }
+        p->pos += n;
+        acc_range(a, r1, toupper((unsigned char)c1) - 'A', r2, toupper((unsigned char)c2) - 'A');
+
+        skip_whitespace(p);
+        if (p->src[p->pos] == ',') {
+            p->pos++;
+            continue;
+        }
+        if (p->src[p->pos] != ')') return 0;
+        p->pos++;
+        return 1;
+    }
 }
 
 static double parse_expr(Parser *p);
@@ -236,21 +273,8 @@ static double parse_primary(Parser *p) {
 
         if (p->src[p->pos] == '(') {
             p->pos++;
-            char c1 = '\0', c2 = '\0';
-            int r1 = -1, r2 = -1;
-            int matched = sscanf(p->src + p->pos, " %c%d : %c%d", &c1, &r1, &c2, &r2) == 4;
-            if (!matched && sscanf(p->src + p->pos, " %c%d", &c1, &r1) == 2) {
-                c2 = c1;
-                r2 = r1;
-                matched = 1;
-            }
-            if (matched) {
-                while (p->src[p->pos] != ')' && p->src[p->pos] != '\0') p->pos++;
-                if (p->src[p->pos] == ')') p->pos++;
-                int col1 = toupper((unsigned char)c1) - 'A';
-                int col2 = toupper((unsigned char)c2) - 'A';
-                return eval_range(token, r1, col1, r2, col2);
-            }
+            RangeAcc acc = { 0.0, 0.0, 0.0, 0, 1 };
+            if (parse_range_list(p, &acc)) return acc_result(token, &acc);
         } else {
             int col_idx = toupper((unsigned char)token[0]) - 'A';
             int row_idx = 0;
@@ -383,20 +407,27 @@ static int v_primary(const char *s, int *p) {
             if (!known_function(name)) return 0;
             (*p)++;
 
-            char c1, c2;
-            int r1, r2, n = 0;
-            if (sscanf(s + *p, " %c%d : %c%d%n", &c1, &r1, &c2, &r2, &n) != 4) {
-                if (sscanf(s + *p, " %c%d%n", &c1, &r1, &n) != 2) return 0;
-                c2 = c1;
-                r2 = r1;
+            for (;;) {
+                char c1, c2;
+                int r1, r2, n = 0;
+                if (sscanf(s + *p, " %c%d : %c%d%n", &c1, &r1, &c2, &r2, &n) != 4) {
+                    n = 0;
+                    if (sscanf(s + *p, " %c%d%n", &c1, &r1, &n) != 2) return 0;
+                    c2 = c1;
+                    r2 = r1;
+                }
+                if (!isalpha((unsigned char)c1) || !isalpha((unsigned char)c2)) return 0;
+                if (!ref_in_bounds(c1, r1) || !ref_in_bounds(c2, r2)) return 0;
+                *p += n;
+                v_skip(s, p);
+                if (s[*p] == ',') {
+                    (*p)++;
+                    continue;
+                }
+                if (s[*p] != ')') return 0;
+                (*p)++;
+                return 1;
             }
-            if (!isalpha((unsigned char)c1) || !isalpha((unsigned char)c2)) return 0;
-            if (!ref_in_bounds(c1, r1) || !ref_in_bounds(c2, r2)) return 0;
-            *p += n;
-            v_skip(s, p);
-            if (s[*p] != ')') return 0;
-            (*p)++;
-            return 1;
         }
 
         if (len != 1) return 0;
