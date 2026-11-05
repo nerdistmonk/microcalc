@@ -474,7 +474,84 @@ static int v_expr(const char *s, int *p) {
     return 1;
 }
 
+/* Shorthand chain: cell references joined left to right by s (add), S (subtract),
+   x or * (multiply), d or / (divide). Parentheses group a sub-chain. */
+typedef struct {
+    const char *s;
+    int p;
+    int eval;
+} Chain;
+
+static int chain_expr(Chain *c, double *out);
+
+static void chain_skip(Chain *c) {
+    while (c->s[c->p] == ' ' || c->s[c->p] == '\t') c->p++;
+}
+
+static int chain_operand(Chain *c, double *out) {
+    chain_skip(c);
+    if (c->s[c->p] == '(') {
+        c->p++;
+        if (!chain_expr(c, out)) return 0;
+        chain_skip(c);
+        if (c->s[c->p] != ')') return 0;
+        c->p++;
+        return 1;
+    }
+    if (!isalpha((unsigned char)c->s[c->p]) || !isdigit((unsigned char)c->s[c->p + 1])) return 0;
+    char col = c->s[c->p];
+    int p = c->p + 1, row = 0;
+    while (isdigit((unsigned char)c->s[p])) {
+        if (row < MAX_ROWS) row = row * 10 + (c->s[p] - '0');
+        p++;
+    }
+    if (!ref_in_bounds(col, row)) return 0;
+    c->p = p;
+    *out = 0.0;
+    if (!c->eval) return 1;
+
+    int col_idx = toupper((unsigned char)col) - 'A';
+    if (row == cur_eval_r && col_idx == cur_eval_c) return 1;
+    if (ref_is_error(row, col_idx)) eval_error = 1;
+    *out = grid[row][col_idx].value;
+    return 1;
+}
+
+static int chain_expr(Chain *c, double *out) {
+    double acc;
+    if (!chain_operand(c, &acc)) return 0;
+    for (;;) {
+        chain_skip(c);
+        char op = c->s[c->p];
+        if (op == '\0' || strchr("sSx*d/", op) == NULL) break;
+        c->p++;
+        double right;
+        if (!chain_operand(c, &right)) return 0;
+        if (op == 's') acc += right;
+        else if (op == 'S') acc -= right;
+        else if (op == 'x' || op == '*') acc *= right;
+        else acc = (right != 0.0) ? (acc / right) : 0.0;
+    }
+    *out = acc;
+    return 1;
+}
+
+static int chain_parse(const char *s, int eval, double *out) {
+    Chain c = { s, 0, eval };
+    if (!chain_expr(&c, out)) return 0;
+    chain_skip(&c);
+    return s[c.p] == '\0';
+}
+
+static int only_blank_after(const char *s) {
+    while (*s == ' ' || *s == '\t') s++;
+    return *s == '\0';
+}
+
 int formula_is_valid(const char *expr) {
+    double unused;
+    if (chain_parse(expr, 0, &unused)) return 1;
+
     char c1, c2, op;
     int r1, r2, n = 0;
 
@@ -532,11 +609,19 @@ void eval_cell(int r, int c) {
             set_formula_result(r, c, eval_range("SUM", r1, col1, r2, col2));
             return;
         }
-        if (sscanf(expr, " %c%d %c %c%d", &c1, &r1, &temp_op, &c2, &r2) == 5 && strchr("asMmc", temp_op)) {
+        int two_len = 0;
+        if (sscanf(expr, " %c%d %c %c%d%n", &c1, &r1, &temp_op, &c2, &r2, &two_len) == 5 &&
+            strchr("asMmc", temp_op) && only_blank_after(expr + two_len)) {
             int col1 = toupper((unsigned char)c1) - 'A';
             int col2 = toupper((unsigned char)c2) - 'A';
             char fn_str[2] = {temp_op, '\0'};
             set_formula_result(r, c, eval_range(fn_str, r1, col1, r2, col2));
+            return;
+        }
+
+        double chain_val;
+        if (chain_parse(expr, 1, &chain_val)) {
+            set_formula_result(r, c, chain_val);
             return;
         }
 
