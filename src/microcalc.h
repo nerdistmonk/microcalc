@@ -23,6 +23,7 @@ typedef struct {
     char text[64];
     double value;
     int is_formula;
+    int is_invalid;
     int color_state; // 0: Normal, 1: Green (+), 2: Red (-)
 } Cell;
 
