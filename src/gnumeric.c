@@ -28,34 +28,60 @@ static void xl_emit(Xlat *x, char ch) {
     }
 }
 
-static void xl_emit_str(Xlat *x, const char *s) {
-    while (*s) xl_emit(x, *s++);
-}
-
 static void xl_skip(Xlat *x) {
     while (*x->p == ' ' || *x->p == '\t') x->p++;
 }
 
-/* Gnumeric A1 refs are 1-based rows; Microcalc refs are 0-based (A0). */
-static int xl_ref(Xlat *x) {
-    if (!isalpha((unsigned char)*x->p)) return 0;
-    char col = (char)toupper((unsigned char)*x->p);
-    if (col < 'A' || col > 'Z') return 0;
-    const char *q = x->p + 1;
+typedef struct {
+    int r1, c1, r2, c2;
+} XlRange;
+
+#define XL_MAX_ARGS 16
+
+/* Reads one A1 reference (optional $ anchors) into a 0-based row and column. Gnumeric rows are 1-based. */
+static int xl_cell(Xlat *x, int *row, int *col) {
+    const char *q = x->p;
+    if (*q == '$') q++;
+    if (!isalpha((unsigned char)*q)) return 0;
+    char c = (char)toupper((unsigned char)*q);
+    if (c < 'A' || c > 'Z') return 0;
+    q++;
+    if (*q == '$') q++;
     if (!isdigit((unsigned char)*q)) return 0;
-    long row = 0;
+    long r = 0;
     while (isdigit((unsigned char)*q)) {
-        row = row * 10 + (*q - '0');
-        if (row > MAX_ROWS) return 0;
+        r = r * 10 + (*q - '0');
+        if (r > MAX_ROWS) return 0;
         q++;
     }
-    if (row < 1 || isalnum((unsigned char)*q) || *q == '_') return 0;
+    if (r < 1 || isalnum((unsigned char)*q) || *q == '_') return 0;
     x->p = q;
-    char buf[16];
-    snprintf(buf, sizeof buf, "%c%ld", col, row - 1);
-    xl_emit_str(x, buf);
+    *row = (int)r - 1;
+    *col = c - 'A';
     return 1;
 }
+
+static void xl_emit_cell(Xlat *x, int row, int col) {
+    char buf[16];
+    snprintf(buf, sizeof buf, "%c%d", 'A' + col, row);
+    for (const char *s = buf; *s; s++) xl_emit(x, *s);
+}
+
+static int xl_range(Xlat *x, XlRange *rg) {
+    xl_skip(x);
+    if (!xl_cell(x, &rg->r1, &rg->c1)) return 0;
+    rg->r2 = rg->r1;
+    rg->c2 = rg->c1;
+    xl_skip(x);
+    if (*x->p == ':') {
+        x->p++;
+        xl_skip(x);
+        if (!xl_cell(x, &rg->r2, &rg->c2)) return 0;
+        xl_skip(x);
+    }
+    return 1;
+}
+
 
 static int xl_number(Xlat *x) {
     const char *q = x->p;
@@ -72,49 +98,75 @@ static int xl_number(Xlat *x) {
 
 static int xl_expr(Xlat *x);
 
-/* Function names accepted by Microcalc, mapped to their canonical spelling. */
-static const char *xl_function_name(const char *name, size_t len) {
-    static const char *const names[][2] = {
-        {"SUM", "SUM"}, {"AVERAGE", "AVG"}, {"AVG", "AVG"},
-        {"MIN", "MIN"}, {"MAX", "MAX"}, {"COUNT", "COUNT"},
+/* Maps a Gnumeric function name to its range operator letter (0 if unsupported). */
+static char xl_function_op(const char *name, size_t len) {
+    static const struct { const char *name; char op; } table[] = {
+        {"SUM", 's'}, {"AVERAGE", 'a'}, {"AVG", 'a'}, {"MIN", 'm'}, {"MAX", 'M'}, {"COUNT", 'c'},
     };
-    for (size_t i = 0; i < sizeof names / sizeof names[0]; i++) {
-        if (strlen(names[i][0]) == len && strncasecmp(names[i][0], name, len) == 0) return names[i][1];
+    for (size_t i = 0; i < sizeof table / sizeof table[0]; i++) {
+        if (strlen(table[i].name) == len && strncasecmp(table[i].name, name, len) == 0) return table[i].op;
     }
-    return NULL;
+    return 0;
 }
 
-static int xl_arg(Xlat *x) {
-    xl_skip(x);
-    if (!xl_ref(x)) return 0;
-    xl_skip(x);
-    if (*x->p == ':') {
-        xl_emit(x, ':');
-        x->p++;
-        xl_skip(x);
-        if (!xl_ref(x)) return 0;
-        xl_skip(x);
-    }
-    return 1;
-}
-
-/* Function calls keep their argument list, e.g. SUM(A1:A3,B2), which Microcalc evaluates directly. */
-static int xl_function(Xlat *x, const char *name_start, size_t name_len) {
-    const char *canonical = xl_function_name(name_start, name_len);
-    if (!canonical) return 0;
-    x->p += name_len + 1; /* skip name and '(' */
-    xl_emit_str(x, canonical);
-    xl_emit(x, '(');
-    for (int args = 0;; args++) {
-        if (args > 0) xl_emit(x, ',');
-        if (!xl_arg(x)) return 0;
+/* Parses NAME(range, range, ...) without emitting anything. */
+static int xl_call(Xlat *x, char *op, XlRange *args, int *nargs) {
+    const char *q = x->p;
+    while (isalpha((unsigned char)*q)) q++;
+    char code = xl_function_op(x->p, (size_t)(q - x->p));
+    if (!code || *q != '(') return 0;
+    x->p = q + 1;
+    *nargs = 0;
+    for (;;) {
+        if (*nargs >= XL_MAX_ARGS) return 0;
+        if (!xl_range(x, &args[*nargs])) return 0;
+        (*nargs)++;
         xl_skip(x);
         if (*x->p != ',') break;
         x->p++;
     }
     if (*x->p != ')') return 0;
-    xl_emit(x, ')');
     x->p++;
+    *op = code;
+    return 1;
+}
+
+/* A lone function over one range becomes a native range op: =SUM(A1:A3) -> =A0rsA2. */
+static int xl_visual_call(Xlat *x) {
+    XlRange args[XL_MAX_ARGS];
+    int nargs = 0;
+    char op;
+    if (!xl_call(x, &op, args, &nargs) || nargs != 1) return 0;
+    xl_emit_cell(x, args[0].r1, args[0].c1);
+    xl_emit(x, 'r');
+    xl_emit(x, op);
+    xl_emit_cell(x, args[0].r2, args[0].c2);
+    return 1;
+}
+
+/* SUM inside arithmetic expands to explicit cells, e.g. SUM(A1:A3) -> (A0+A1+A2).
+   The other functions have no equivalent inside arithmetic, so they are rejected. */
+static int xl_sum_expand(Xlat *x) {
+    XlRange args[XL_MAX_ARGS];
+    int nargs = 0;
+    char op;
+    if (!xl_call(x, &op, args, &nargs) || op != 's') return 0;
+    xl_emit(x, '(');
+    int first = 1;
+    for (int i = 0; i < nargs; i++) {
+        int r1 = args[i].r1 < args[i].r2 ? args[i].r1 : args[i].r2;
+        int r2 = args[i].r1 < args[i].r2 ? args[i].r2 : args[i].r1;
+        int c1 = args[i].c1 < args[i].c2 ? args[i].c1 : args[i].c2;
+        int c2 = args[i].c1 < args[i].c2 ? args[i].c2 : args[i].c1;
+        for (int r = r1; r <= r2; r++) {
+            for (int c = c1; c <= c2; c++) {
+                if (!first) xl_emit(x, '+');
+                first = 0;
+                xl_emit_cell(x, r, c);
+            }
+        }
+    }
+    xl_emit(x, ')');
     return 1;
 }
 
@@ -143,6 +195,31 @@ static int xl_term(Xlat *x) {
     return 1;
 }
 
+/* True if the emitted text from start has a * or / outside any parentheses. */
+static int xl_has_top_level_mul(const Xlat *x, size_t start) {
+    int depth = 0;
+    for (size_t i = start; i < x->n; i++) {
+        char ch = x->out[i];
+        if (ch == '(') depth++;
+        else if (ch == ')') depth--;
+        else if (depth == 0 && (ch == '*' || ch == '/')) return 1;
+    }
+    return 0;
+}
+
+/* Microcalc runs left to right, so an Excel right operand like the B*C in A+B*C is wrapped. */
+static void xl_wrap_from(Xlat *x, size_t start) {
+    if (x->n + 2 >= sizeof x->out) {
+        x->ok = 0;
+        return;
+    }
+    memmove(x->out + start + 1, x->out + start, x->n - start);
+    x->out[start] = '(';
+    x->n++;
+    x->out[x->n++] = ')';
+    x->out[x->n] = '\0';
+}
+
 static int xl_expr(Xlat *x) {
     if (!xl_term(x)) return 0;
     for (;;) {
@@ -150,7 +227,9 @@ static int xl_expr(Xlat *x) {
         if (*x->p != '+' && *x->p != '-') break;
         xl_emit(x, *x->p++);
         xl_skip(x);
+        size_t start = x->n;
         if (!xl_term(x)) return 0;
+        if (xl_has_top_level_mul(x, start)) xl_wrap_from(x, start);
     }
     return 1;
 }
@@ -175,11 +254,14 @@ static int xl_primary(Xlat *x) {
         return 1;
     }
     if (isdigit((unsigned char)c) || c == '.') return xl_number(x);
-    if (isalpha((unsigned char)c)) {
+    if (isalpha((unsigned char)c) || c == '$') {
         const char *q = x->p;
         while (isalpha((unsigned char)*q)) q++;
-        if (*q == '(') return xl_function(x, x->p, (size_t)(q - x->p));
-        return xl_ref(x);
+        if (*q == '(') return xl_sum_expand(x);
+        int row, col;
+        if (!xl_cell(x, &row, &col)) return 0;
+        xl_emit_cell(x, row, col);
+        return 1;
     }
     return 0;
 }
@@ -192,6 +274,15 @@ static int translate_formula(const char *src, char *out, size_t out_size) {
     x.p = src + 1;
     x.ok = 1;
     xl_emit(&x, '=');
+
+    Xlat visual = x;
+    if (xl_visual_call(&visual)) {
+        xl_skip(&visual);
+        if (*visual.p == '\0' && visual.ok && visual.n < out_size) {
+            memcpy(out, visual.out, visual.n + 1);
+            return 1;
+        }
+    }
     if (!xl_expr(&x)) return 0;
     xl_skip(&x);
     if (*x.p != '\0' || !x.ok || x.n >= out_size) return 0;
@@ -289,13 +380,7 @@ static void store_text(GnmState *st, Cell *cell, const char *text) {
 static int keep_untranslated_formula(const char *src, Cell *cell) {
     size_t len = strlen(src);
     if (len > sizeof cell->text - 1) return 0;
-    char expr[sizeof cell->text];
-    int k = 0;
-    for (const char *s = src + 1; *s; s++) {
-        if (*s != '$') expr[k++] = *s;
-    }
-    expr[k] = '\0';
-    if (formula_is_valid(expr)) return 0;
+    if (formula_is_valid(src + 1)) return 0;
     memcpy(cell->text, src, len + 1);
     return 1;
 }

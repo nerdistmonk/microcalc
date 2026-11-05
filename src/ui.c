@@ -24,7 +24,7 @@ void show_cheatsheet(void) {
     mvprintw(18, 2, " [ File I/O & Formulas ]");
     mvprintw(19, 4, "• Ctrl+S / Ctrl+O/L  : Save / Open (.mc native or .csv flat spreadsheet)");
     mvprintw(20, 4, "• Ctrl+P             : Export printable sheet as PDF document");
-    mvprintw(21, 4, "• Formula Examples   : =A0+A1*(B2-5) | =SUM(A0:A10) | =AVG(C0:C5)");
+    mvprintw(21, 4, "• Formula Examples   : =A0+A1*(B2-5) | =A0rsA10 | =C0raC5");
     mvprintw(22, 4, "• Type in edit box   : =D today's date | =T time | =DT date and time");
 
     attron(COLOR_PAIR(3) | A_BOLD);
@@ -274,7 +274,7 @@ void handle_mouse(void) {
                         else if (clicked_c == min_c && min_c < max_c) min_c++;
 
                         snprintf(grid[clicked_r][clicked_c].text, sizeof(grid[clicked_r][clicked_c].text), 
-                                 "=SUM(%c%d:%c%d)", 'A' + min_c, min_r, 'A' + max_c, max_r);
+                                 "=%c%drs%c%d", 'A' + min_c, min_r, 'A' + max_c, max_r);
                         cursor_r = clicked_r;
                         cursor_c = clicked_c;
                         is_selecting = 0;

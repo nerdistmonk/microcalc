@@ -125,18 +125,6 @@ int is_cell_selected(int r, int c) {
     return (r >= min_r && r <= max_r && c >= min_c && c <= max_c);
 }
 
-typedef struct {
-    const char *src;
-    int pos;
-} Parser;
-
-static void skip_whitespace(Parser *p) {
-    while (p->src[p->pos] == ' ' || p->src[p->pos] == '\t' || 
-           p->src[p->pos] == '\r' || p->src[p->pos] == '\n') {
-        p->pos++;
-    }
-}
-
 static int eval_error = 0;
 
 static int ref_is_error(int r, int c) {
@@ -156,9 +144,43 @@ static void set_formula_result(int r, int c, double v) {
 }
 
 typedef struct {
-    double sum, max_val, min_val;
-    int count, first;
+    double sum, max_val, min_val, prod, seq;
+    int count;
+    char seq_op;
 } RangeAcc;
+
+/* seq_op selects the ordered fold kept in seq: 'S' subtracts each later value,
+   'd' divides by each later value, anything else leaves seq unused. */
+static void acc_init(RangeAcc *a, char seq_op) {
+    a->sum = a->max_val = a->min_val = a->seq = 0.0;
+    a->prod = 1.0;
+    a->count = 0;
+    a->seq_op = seq_op;
+}
+
+static void acc_cell(RangeAcc *a, int r, int c) {
+    if (r == cur_eval_r && c == cur_eval_c) return;
+    if (r < 0 || r >= MAX_ROWS || c < 0 || c >= MAX_COLS) return;
+
+    if (grid[r][c].text[0] == '=' && (grid[r][c].is_value_error || grid[r][c].is_invalid)) {
+        eval_error = 1;
+        return;
+    }
+    if (grid[r][c].text[0] == '=' ? !grid[r][c].is_invalid : is_pure_number(grid[r][c].text)) {
+        double val = grid[r][c].value;
+        a->sum += val;
+        a->prod *= val;
+        if (a->count == 0) {
+            a->max_val = a->min_val = a->seq = val;
+        } else {
+            if (val > a->max_val) a->max_val = val;
+            if (val < a->min_val) a->min_val = val;
+            if (a->seq_op == 'S') a->seq -= val;
+            else if (a->seq_op == 'd') a->seq = (val != 0.0) ? (a->seq / val) : 0.0;
+        }
+        a->count++;
+    }
+}
 
 static void acc_range(RangeAcc *a, int r1, int c1, int r2, int c2) {
     int min_r = (r1 < r2) ? r1 : r2;
@@ -168,190 +190,17 @@ static void acc_range(RangeAcc *a, int r1, int c1, int r2, int c2) {
 
     for (int r = min_r; r <= max_r; r++) {
         for (int c = min_c; c <= max_c; c++) {
-            if (r == cur_eval_r && c == cur_eval_c) continue;
-
-            if (r >= 0 && r < MAX_ROWS && c >= 0 && c < MAX_COLS) {
-                if (grid[r][c].text[0] == '=' && (grid[r][c].is_value_error || grid[r][c].is_invalid)) {
-                    eval_error = 1;
-                    continue;
-                }
-                if (grid[r][c].text[0] == '=' ? !grid[r][c].is_invalid : is_pure_number(grid[r][c].text)) {
-                    double val = grid[r][c].value;
-                    a->sum += val;
-                    a->count++;
-                    if (a->first) {
-                        a->max_val = a->min_val = val;
-                        a->first = 0;
-                    } else {
-                        if (val > a->max_val) a->max_val = val;
-                        if (val < a->min_val) a->min_val = val;
-                    }
-                }
-            }
+            acc_cell(a, r, c);
         }
     }
 }
 
 static double acc_result(const char *func, const RangeAcc *a) {
-    if (strcasecmp(func, "SUM") == 0 || strcmp(func, "s") == 0) return a->sum;
-    if (strcasecmp(func, "AVG") == 0 || strcasecmp(func, "AVERAGE") == 0 || strcmp(func, "a") == 0) return (a->count > 0) ? (a->sum / a->count) : 0.0;
-    if (strcasecmp(func, "MAX") == 0 || strcmp(func, "M") == 0) return (a->count > 0) ? a->max_val : 0.0;
-    if (strcasecmp(func, "MIN") == 0 || strcmp(func, "m") == 0) return (a->count > 0) ? a->min_val : 0.0;
-    if (strcasecmp(func, "COUNT") == 0 || strcmp(func, "c") == 0) return (double)a->count;
-
+    if (strcmp(func, "a") == 0) return (a->count > 0) ? (a->sum / a->count) : 0.0;
+    if (strcmp(func, "M") == 0) return (a->count > 0) ? a->max_val : 0.0;
+    if (strcmp(func, "m") == 0) return (a->count > 0) ? a->min_val : 0.0;
+    if (strcmp(func, "c") == 0) return (double)a->count;
     return a->sum;
-}
-
-static double eval_range(const char *func, int r1, int c1, int r2, int c2) {
-    RangeAcc a = { 0.0, 0.0, 0.0, 0, 1 };
-    acc_range(&a, r1, c1, r2, c2);
-    return acc_result(func, &a);
-}
-
-/* Reads "ref" or "ref:ref" items separated by commas, up to the closing parenthesis. */
-static int parse_range_list(Parser *p, RangeAcc *a) {
-    for (;;) {
-        skip_whitespace(p);
-        const char *s = p->src + p->pos;
-        char c1 = '\0', c2 = '\0';
-        int r1 = -1, r2 = -1, n = 0;
-        if (sscanf(s, " %c%d : %c%d%n", &c1, &r1, &c2, &r2, &n) != 4) {
-            n = 0;
-            if (sscanf(s, " %c%d%n", &c1, &r1, &n) != 2) return 0;
-            c2 = c1;
-            r2 = r1;
-        }
-        p->pos += n;
-        acc_range(a, r1, toupper((unsigned char)c1) - 'A', r2, toupper((unsigned char)c2) - 'A');
-
-        skip_whitespace(p);
-        if (p->src[p->pos] == ',') {
-            p->pos++;
-            continue;
-        }
-        if (p->src[p->pos] != ')') return 0;
-        p->pos++;
-        return 1;
-    }
-}
-
-static double parse_expr(Parser *p);
-static double parse_factor(Parser *p);
-
-static double parse_primary(Parser *p) {
-    skip_whitespace(p);
-
-    if (p->src[p->pos] == '+') {
-        p->pos++;
-        return parse_factor(p);
-    }
-    if (p->src[p->pos] == '-') {
-        p->pos++;
-        return -parse_factor(p);
-    }
-    if (p->src[p->pos] == '$') {
-        p->pos++;
-        return parse_factor(p);
-    }
-
-    if (p->src[p->pos] == '(') {
-        p->pos++;
-        double val = parse_expr(p);
-        skip_whitespace(p);
-        if (p->src[p->pos] == ')') p->pos++;
-        return val;
-    }
-
-    if (isalpha((unsigned char)p->src[p->pos])) {
-        int start = p->pos;
-        while (isalpha((unsigned char)p->src[p->pos])) p->pos++;
-        int len = p->pos - start;
-        char token[16] = {0};
-        if (len < 15) strncpy(token, p->src + start, len);
-
-        skip_whitespace(p);
-
-        if (p->src[p->pos] == '(') {
-            p->pos++;
-            RangeAcc acc = { 0.0, 0.0, 0.0, 0, 1 };
-            if (parse_range_list(p, &acc)) return acc_result(token, &acc);
-        } else {
-            int col_idx = toupper((unsigned char)token[0]) - 'A';
-            int row_idx = 0;
-            while (isdigit((unsigned char)p->src[p->pos])) {
-                row_idx = row_idx * 10 + (p->src[p->pos] - '0');
-                p->pos++;
-            }
-            if (row_idx == cur_eval_r && col_idx == cur_eval_c) return 0.0;
-            if (col_idx >= 0 && col_idx < MAX_COLS && row_idx >= 0 && row_idx < MAX_ROWS) {
-                if (ref_is_error(row_idx, col_idx)) eval_error = 1;
-                return grid[row_idx][col_idx].value;
-            }
-            return 0.0;
-        }
-    }
-
-    if (isdigit((unsigned char)p->src[p->pos]) || p->src[p->pos] == '.') {
-        char *endptr;
-        double val = strtod(p->src + p->pos, &endptr);
-        p->pos = (int)(endptr - p->src);
-        return val;
-    }
-
-    return 0.0;
-}
-
-static double parse_factor(Parser *p) {
-    double val = parse_primary(p);
-    for (;;) {
-        skip_whitespace(p);
-        if (p->src[p->pos] != '%') break;
-        p->pos++;
-        val /= 100.0;
-    }
-    return val;
-}
-
-static double parse_term(Parser *p) {
-    double left = parse_factor(p);
-    while (1) {
-        skip_whitespace(p);
-        char op = p->src[p->pos];
-        if (op == '*' || op == '/') {
-            p->pos++;
-            double right = parse_factor(p);
-            if (op == '*') left *= right;
-            else if (op == '/') left = (right != 0.0) ? (left / right) : 0.0;
-        } else {
-            break;
-        }
-    }
-    return left;
-}
-
-static double parse_expr(Parser *p) {
-    double left = parse_term(p);
-    while (1) {
-        skip_whitespace(p);
-        char op = p->src[p->pos];
-        if (op == '+' || op == '-') {
-            p->pos++;
-            double right = parse_term(p);
-            if (op == '+') left += right;
-            else if (op == '-') left -= right;
-        } else {
-            break;
-        }
-    }
-    return left;
-}
-
-static int known_function(const char *name) {
-    if (strcasecmp(name, "SUM") == 0 || strcasecmp(name, "AVG") == 0 ||
-        strcasecmp(name, "AVERAGE") == 0 || strcasecmp(name, "MAX") == 0 ||
-        strcasecmp(name, "MIN") == 0 || strcasecmp(name, "COUNT") == 0) return 1;
-    return strcmp(name, "s") == 0 || strcmp(name, "a") == 0 || strcmp(name, "M") == 0 ||
-           strcmp(name, "m") == 0 || strcmp(name, "c") == 0;
 }
 
 static int ref_in_bounds(char col_letter, int row) {
@@ -359,176 +208,143 @@ static int ref_in_bounds(char col_letter, int row) {
     return row >= 0 && row < MAX_ROWS && col >= 0 && col < MAX_COLS;
 }
 
-static void v_skip(const char *s, int *p) {
-    while (s[*p] == ' ' || s[*p] == '\t' || s[*p] == '\r' || s[*p] == '\n') (*p)++;
+/* "A0 a A2": one of a m M c applied to exactly two cells. */
+static double pair_op(char op, int r1, int c1, int r2, int c2) {
+    RangeAcc a;
+    acc_init(&a, 0);
+    acc_cell(&a, r1, c1);
+    acc_cell(&a, r2, c2);
+    char fn[2] = {op, '\0'};
+    return acc_result(fn, &a);
 }
 
-static int v_expr(const char *s, int *p);
-
-static int v_primary(const char *s, int *p);
-
-static int v_factor(const char *s, int *p) {
-    if (!v_primary(s, p)) return 0;
-    for (;;) {
-        v_skip(s, p);
-        if (s[*p] != '%') break;
-        (*p)++;
-    }
-    return 1;
+/* Applies op over the rectangle between two cells. Ordered folds (S, d) start at the
+   top-left cell and step through the rest in row-major order. */
+static double range_op(char op, int r1, int c1, int r2, int c2) {
+    RangeAcc a;
+    acc_init(&a, op);
+    acc_range(&a, r1, c1, r2, c2);
+    if (op == 'x') return (a.count > 0) ? a.prod : 0.0;
+    if (op == 'S' || op == 'd') return (a.count > 0) ? a.seq : 0.0;
+    char fn[2] = {op, '\0'};
+    return acc_result(fn, &a);
 }
 
-static int v_primary(const char *s, int *p) {
-    v_skip(s, p);
-    char ch = s[*p];
-
-    if (ch == '+' || ch == '-') {
-        (*p)++;
-        return v_factor(s, p);
-    }
-    if (ch == '(') {
-        (*p)++;
-        if (!v_expr(s, p)) return 0;
-        v_skip(s, p);
-        if (s[*p] != ')') return 0;
-        (*p)++;
-        return 1;
-    }
-    if (isalpha((unsigned char)ch)) {
-        int start = *p;
-        while (isalpha((unsigned char)s[*p])) (*p)++;
-        int len = *p - start;
-        v_skip(s, p);
-
-        if (s[*p] == '(') {
-            char name[16];
-            if (len >= 15) return 0;
-            memcpy(name, s + start, len);
-            name[len] = '\0';
-            if (!known_function(name)) return 0;
-            (*p)++;
-
-            for (;;) {
-                char c1, c2;
-                int r1, r2, n = 0;
-                if (sscanf(s + *p, " %c%d : %c%d%n", &c1, &r1, &c2, &r2, &n) != 4) {
-                    n = 0;
-                    if (sscanf(s + *p, " %c%d%n", &c1, &r1, &n) != 2) return 0;
-                    c2 = c1;
-                    r2 = r1;
-                }
-                if (!isalpha((unsigned char)c1) || !isalpha((unsigned char)c2)) return 0;
-                if (!ref_in_bounds(c1, r1) || !ref_in_bounds(c2, r2)) return 0;
-                *p += n;
-                v_skip(s, p);
-                if (s[*p] == ',') {
-                    (*p)++;
-                    continue;
-                }
-                if (s[*p] != ')') return 0;
-                (*p)++;
-                return 1;
-            }
-        }
-
-        if (len != 1) return 0;
-        if (!isdigit((unsigned char)s[*p])) return 0;
-        int row = 0;
-        while (isdigit((unsigned char)s[*p])) {
-            if (row < MAX_ROWS) row = row * 10 + (s[*p] - '0');
-            (*p)++;
-        }
-        return ref_in_bounds(s[start], row);
-    }
-    if (isdigit((unsigned char)ch) || ch == '.') {
-        char *end;
-        const char *begin = s + *p;
-        strtod(begin, &end);
-        if (end == begin) return 0;
-        *p = (int)(end - s);
-        return 1;
-    }
-    return 0;
-}
-
-static int v_term(const char *s, int *p) {
-    if (!v_factor(s, p)) return 0;
-    for (;;) {
-        v_skip(s, p);
-        char op = s[*p];
-        if (op != '*' && op != '/') break;
-        (*p)++;
-        if (!v_factor(s, p)) return 0;
-    }
-    return 1;
-}
-
-static int v_expr(const char *s, int *p) {
-    if (!v_term(s, p)) return 0;
-    for (;;) {
-        v_skip(s, p);
-        char op = s[*p];
-        if (op != '+' && op != '-') break;
-        (*p)++;
-        if (!v_term(s, p)) return 0;
-    }
-    return 1;
-}
-
-/* Shorthand chain: cell references joined left to right by s (add), S (subtract),
-   x or * (multiply), d or / (divide). Parentheses group a sub-chain. */
+/* One left-to-right evaluator serves both shorthand systems. There is no operator
+   precedence: operators apply in the order written, and parentheses group.
+   Operators: s + (add), S - (subtract), x * (multiply), d / (divide), and the math
+   forms + - * /. Operands: a number, a cell, a parenthesized group, cell r<op> cell,
+   or cell <a|m|M|c> cell. Any operand may take a leading + or - and a trailing %.
+   With eval = 0 the same walk only checks syntax. */
 typedef struct {
     const char *s;
     int p;
     int eval;
-} Chain;
+} Ev;
 
-static int chain_expr(Chain *c, double *out);
+static int ev_expr(Ev *e, double *out);
 
-static void chain_skip(Chain *c) {
-    while (c->s[c->p] == ' ' || c->s[c->p] == '\t') c->p++;
+static void ev_skip(Ev *e) {
+    while (e->s[e->p] == ' ' || e->s[e->p] == '\t') e->p++;
 }
 
-static int chain_operand(Chain *c, double *out) {
-    chain_skip(c);
-    if (c->s[c->p] == '(') {
-        c->p++;
-        if (!chain_expr(c, out)) return 0;
-        chain_skip(c);
-        if (c->s[c->p] != ')') return 0;
-        c->p++;
-        return 1;
-    }
-    if (!isalpha((unsigned char)c->s[c->p]) || !isdigit((unsigned char)c->s[c->p + 1])) return 0;
-    char col = c->s[c->p];
-    int p = c->p + 1, row = 0;
-    while (isdigit((unsigned char)c->s[p])) {
-        if (row < MAX_ROWS) row = row * 10 + (c->s[p] - '0');
+static int ev_cell(Ev *e, int *row, int *col) {
+    ev_skip(e);
+    char letter = e->s[e->p];
+    if (!isalpha((unsigned char)letter) || !isdigit((unsigned char)e->s[e->p + 1])) return 0;
+    int p = e->p + 1, r = 0;
+    while (isdigit((unsigned char)e->s[p])) {
+        if (r < MAX_ROWS) r = r * 10 + (e->s[p] - '0');
         p++;
     }
-    if (!ref_in_bounds(col, row)) return 0;
-    c->p = p;
-    *out = 0.0;
-    if (!c->eval) return 1;
-
-    int col_idx = toupper((unsigned char)col) - 'A';
-    if (row == cur_eval_r && col_idx == cur_eval_c) return 1;
-    if (ref_is_error(row, col_idx)) eval_error = 1;
-    *out = grid[row][col_idx].value;
+    if (!ref_in_bounds(letter, r)) return 0;
+    e->p = p;
+    *row = r;
+    *col = toupper((unsigned char)letter) - 'A';
     return 1;
 }
 
-static int chain_expr(Chain *c, double *out) {
-    double acc;
-    if (!chain_operand(c, &acc)) return 0;
+static int ev_reference(Ev *e, double *out) {
+    int r1, c1, r2, c2;
+    if (!ev_cell(e, &r1, &c1)) return 0;
+    ev_skip(e);
+    char op = e->s[e->p];
+
+    if (op == 'r') {
+        char rop = e->s[e->p + 1];
+        if (rop == '*') rop = 'x';
+        if (rop == '/') rop = 'd';
+        if (rop == '\0' || strchr("sSxdaMmc", rop) == NULL) return 0;
+        e->p += 2;
+        if (!ev_cell(e, &r2, &c2)) return 0;
+        *out = e->eval ? range_op(rop, r1, c1, r2, c2) : 0.0;
+        return 1;
+    }
+    if (op != '\0' && strchr("aMmc", op) != NULL) {
+        e->p++;
+        if (!ev_cell(e, &r2, &c2)) return 0;
+        *out = e->eval ? pair_op(op, r1, c1, r2, c2) : 0.0;
+        return 1;
+    }
+
+    *out = 0.0;
+    if (!e->eval) return 1;
+    if (r1 == cur_eval_r && c1 == cur_eval_c) return 1;
+    if (ref_is_error(r1, c1)) eval_error = 1;
+    *out = grid[r1][c1].value;
+    return 1;
+}
+
+static int ev_operand(Ev *e, double *out) {
+    ev_skip(e);
+    char ch = e->s[e->p];
+
+    if (ch == '+' || ch == '-') {
+        e->p++;
+        if (!ev_operand(e, out)) return 0;
+        if (ch == '-') *out = -*out;
+        return 1;
+    }
+    if (ch == '(') {
+        e->p++;
+        if (!ev_expr(e, out)) return 0;
+        ev_skip(e);
+        if (e->s[e->p] != ')') return 0;
+        e->p++;
+    } else if (isdigit((unsigned char)ch) || ch == '.') {
+        const char *begin = e->s + e->p;
+        char *end;
+        double v = strtod(begin, &end);
+        if (end == begin) return 0;
+        e->p = (int)(end - e->s);
+        *out = e->eval ? v : 0.0;
+    } else if (isalpha((unsigned char)ch)) {
+        if (!ev_reference(e, out)) return 0;
+    } else {
+        return 0;
+    }
+
     for (;;) {
-        chain_skip(c);
-        char op = c->s[c->p];
-        if (op == '\0' || strchr("sSx*d/", op) == NULL) break;
-        c->p++;
+        ev_skip(e);
+        if (e->s[e->p] != '%') break;
+        e->p++;
+        *out /= 100.0;
+    }
+    return 1;
+}
+
+static int ev_expr(Ev *e, double *out) {
+    double acc;
+    if (!ev_operand(e, &acc)) return 0;
+    for (;;) {
+        ev_skip(e);
+        char op = e->s[e->p];
+        if (op == '\0' || strchr("sSxd+-*/", op) == NULL) break;
+        e->p++;
         double right;
-        if (!chain_operand(c, &right)) return 0;
-        if (op == 's') acc += right;
-        else if (op == 'S') acc -= right;
+        if (!ev_operand(e, &right)) return 0;
+        if (op == 's' || op == '+') acc += right;
+        else if (op == 'S' || op == '-') acc -= right;
         else if (op == 'x' || op == '*') acc *= right;
         else acc = (right != 0.0) ? (acc / right) : 0.0;
     }
@@ -536,45 +352,12 @@ static int chain_expr(Chain *c, double *out) {
     return 1;
 }
 
-static int chain_parse(const char *s, int eval, double *out) {
-    Chain c = { s, 0, eval };
-    if (!chain_expr(&c, out)) return 0;
-    chain_skip(&c);
-    return s[c.p] == '\0';
-}
-
-static int only_blank_after(const char *s) {
-    while (*s == ' ' || *s == '\t') s++;
-    return *s == '\0';
-}
-
 int formula_is_valid(const char *expr) {
+    Ev e = { expr, 0, 0 };
     double unused;
-    if (chain_parse(expr, 0, &unused)) return 1;
-
-    char c1, c2, op;
-    int r1, r2, n = 0;
-
-    if (sscanf(expr, " %c%d %c %c%d%n", &c1, &r1, &op, &c2, &r2, &n) == 5 &&
-        isalpha((unsigned char)c1) && isalpha((unsigned char)c2) && strchr("asMmc", op) &&
-        ref_in_bounds(c1, r1) && ref_in_bounds(c2, r2)) {
-        int p = n;
-        v_skip(expr, &p);
-        if (expr[p] == '\0') return 1;
-    }
-
-    if (sscanf(expr, " %c%d : %c%d%n", &c1, &r1, &c2, &r2, &n) == 4 &&
-        isalpha((unsigned char)c1) && isalpha((unsigned char)c2) &&
-        ref_in_bounds(c1, r1) && ref_in_bounds(c2, r2)) {
-        int p = n;
-        v_skip(expr, &p);
-        if (expr[p] == '\0') return 1;
-    }
-
-    int p = 0;
-    if (!v_expr(expr, &p)) return 0;
-    v_skip(expr, &p);
-    return expr[p] == '\0';
+    if (!ev_expr(&e, &unused)) return 0;
+    ev_skip(&e);
+    return expr[e.p] == '\0';
 }
 
 void eval_cell(int r, int c) {
@@ -587,12 +370,7 @@ void eval_cell(int r, int c) {
     if (grid[r][c].text[0] == '=') {
         grid[r][c].is_formula = 1;
 
-        char expr[sizeof grid[r][c].text];
-        int k = 0;
-        for (const char *s = grid[r][c].text + 1; *s != '\0'; s++) {
-            if (*s != '$') expr[k++] = *s;
-        }
-        expr[k] = '\0';
+        const char *expr = grid[r][c].text + 1;
 
         if (!formula_is_valid(expr)) {
             grid[r][c].is_invalid = 1;
@@ -600,33 +378,10 @@ void eval_cell(int r, int c) {
             return;
         }
 
-        char c1, c2, temp_op;
-        int r1, r2;
-
-        if (sscanf(expr, " %c%d : %c%d", &c1, &r1, &c2, &r2) == 4) {
-            int col1 = toupper((unsigned char)c1) - 'A';
-            int col2 = toupper((unsigned char)c2) - 'A';
-            set_formula_result(r, c, eval_range("SUM", r1, col1, r2, col2));
-            return;
-        }
-        int two_len = 0;
-        if (sscanf(expr, " %c%d %c %c%d%n", &c1, &r1, &temp_op, &c2, &r2, &two_len) == 5 &&
-            strchr("asMmc", temp_op) && only_blank_after(expr + two_len)) {
-            int col1 = toupper((unsigned char)c1) - 'A';
-            int col2 = toupper((unsigned char)c2) - 'A';
-            char fn_str[2] = {temp_op, '\0'};
-            set_formula_result(r, c, eval_range(fn_str, r1, col1, r2, col2));
-            return;
-        }
-
-        double chain_val;
-        if (chain_parse(expr, 1, &chain_val)) {
-            set_formula_result(r, c, chain_val);
-            return;
-        }
-
-        Parser p = { .src = expr, .pos = 0 };
-        set_formula_result(r, c, parse_expr(&p));
+        Ev e = { expr, 0, 1 };
+        double v = 0.0;
+        ev_expr(&e, &v);
+        set_formula_result(r, c, v);
     } else {
         grid[r][c].is_formula = 0;
         if (is_pure_number(grid[r][c].text)) {
