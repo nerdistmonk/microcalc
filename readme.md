@@ -84,6 +84,11 @@ Make sure you have a C compiler (`gcc`/`clang`), `cmake`, and `ncurses` developm
    ```bash
    ./microcalc budget.mc
    ```
+   *(Optional)* For a multi-sheet Gnumeric file, pick the sheet with `-p` (1-based):
+   ```bash
+   ./microcalc -p 2 workbook.gnumeric
+   ```
+   Without `-p`, a multi-sheet file asks which sheet to open. `-p` only works with Gnumeric files.
 
 ---
 
@@ -91,4 +96,4 @@ Make sure you have a C compiler (`gcc`/`clang`), `cmake`, and `ncurses` developm
 
 - **`.mc` (Native):** Preserves formulas, cell values, and color states in a compact pipe-delimited structure (`row|col|color|text`).
 - **`.csv` (Flat Data):** Standard comma-separated values format for interoperability with other spreadsheet tools (note: formulas evaluate to static text/numbers upon export).
-- **`.gnumeric` / `.gnm` / `.xml` (Import only):** Gnumeric spreadsheets (plain XML or gzip-compressed). Only the first sheet is imported. Numbers and text are kept. Simple formulas (cell references, `+ - * /`, `%`, and `SUM`/`AVG`/`MIN`/`MAX`/`COUNT`) are translated to Microcalc syntax. Other formulas are kept as-is and shown as invalid (red) because Microcalc can't evaluate them; formulas longer than 63 characters or that Microcalc would read differently are skipped. Text starting with `=` and text longer than 63 characters are not preserved, and booleans or errors are imported as text. Text is collapsed to one line.
+- **`.gnumeric` / `.gnm` / `.xml` (Import only):** Gnumeric spreadsheets (plain XML or gzip-compressed). One sheet is imported: sheet 1 for single-sheet files, otherwise the one you pick (see `-p` above). Numbers and text are kept. Simple formulas (cell references, `+ - * /`, `%`, and `SUM`/`AVG`/`MIN`/`MAX`/`COUNT`) are translated to Microcalc syntax. Other formulas are kept as-is and shown as invalid (red) because Microcalc can't evaluate them; formulas longer than 63 characters or that Microcalc would read differently are skipped. Text starting with `=` and text longer than 63 characters are not preserved, and booleans or errors are imported as text. Text is collapsed to one line.

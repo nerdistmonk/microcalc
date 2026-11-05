@@ -334,16 +334,52 @@ void save_sheet(const char *filename) {
     snprintf(status_msg, sizeof(status_msg), " Successfully saved to %s ", final_name);
 }
 
-void load_sheet(const char *filename) {
+int is_gnumeric_name(const char *filename) {
+    size_t len = strlen(filename);
+    return (len >= 9 && strcasecmp(filename + len - 9, ".gnumeric") == 0) ||
+           (len >= 4 && strcasecmp(filename + len - 4, ".gnm") == 0) ||
+           (len >= 4 && strcasecmp(filename + len - 4, ".xml") == 0);
+}
+
+/* page is the 1-based Gnumeric sheet to load; 0 means not given (asks if the file has several sheets). */
+void load_sheet(const char *filename, int page) {
     if (strstr(filename, ".csv") || strstr(filename, ".CSV")) {
+        if (page > 0) {
+            snprintf(status_msg, sizeof(status_msg), " Error: Page selection only applies to Gnumeric files ");
+            return;
+        }
         load_csv(filename);
         return;
     }
-    size_t len = strlen(filename);
-    if ((len >= 9 && strcasecmp(filename + len - 9, ".gnumeric") == 0) ||
-        (len >= 4 && strcasecmp(filename + len - 4, ".gnm") == 0) ||
-        (len >= 4 && strcasecmp(filename + len - 4, ".xml") == 0)) {
-        load_gnumeric(filename);
+    if (is_gnumeric_name(filename)) {
+        if (page > 0) {
+            load_gnumeric(filename, page);
+            return;
+        }
+        int count = gnumeric_sheet_count(filename);
+        if (count <= 1) {
+            load_gnumeric(filename, 1);
+            return;
+        }
+        char question[96];
+        char answer[16] = {0};
+        snprintf(question, sizeof(question), "Sheet number to open [1-%d]: ", count);
+        prompt_input(question, answer, sizeof(answer));
+        if (strlen(answer) == 0) {
+            snprintf(status_msg, sizeof(status_msg), " Open cancelled. ");
+            return;
+        }
+        char *end;
+        long chosen = strtol(answer, &end, 10);
+        if (*end != '\0' || chosen < 1 || chosen > count) {
+            snprintf(status_msg, sizeof(status_msg), " Error: Sheet must be a number from 1 to %d ", count);
+            return;
+        }
+        load_gnumeric(filename, (int)chosen);
+        return;
+    }
+    if (page > 0) {
+        snprintf(status_msg, sizeof(status_msg), " Error: Page selection only applies to Gnumeric files ");
         return;
     }
 
@@ -395,7 +431,7 @@ void prompt_load(void) {
     char filename[128] = {0};
     prompt_input("Open filename [Tab to autocomplete]: ", filename, sizeof(filename));
     if (strlen(filename) > 0) {
-        load_sheet(filename);
+        load_sheet(filename, 0);
     } else {
         snprintf(status_msg, sizeof(status_msg), " Open cancelled. ");
     }

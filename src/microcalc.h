@@ -90,8 +90,10 @@ void adjust_formula_references(const char *src_formula, char *dest, size_t dest_
 void load_csv(const char *filename);
 void save_csv(const char *filename);
 void save_sheet(const char *filename);
-void load_sheet(const char *filename);
-void load_gnumeric(const char *filename);
+void load_sheet(const char *filename, int page);
+int is_gnumeric_name(const char *filename);
+int gnumeric_sheet_count(const char *filename);
+void load_gnumeric(const char *filename, int sheet);
 void export_pdf(const char *filename);
 
 void show_cheatsheet(void);

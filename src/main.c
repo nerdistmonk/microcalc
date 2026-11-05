@@ -1,4 +1,8 @@
 #include "microcalc.h"
+#include <getopt.h>
+#include <limits.h>
+#include <stdio.h>
+#include <stdlib.h>
 
 // Define Global Variables
 Cell grid[MAX_ROWS][MAX_COLS];
@@ -28,6 +32,28 @@ const char *HELP_LINE_2 = " Ctrl+C/X/V: Copy/Cut/Paste | Ctrl+F: Format | Ctrl+P
 char status_msg[128] = "";
 
 int main(int argc, char *argv[]) {
+    int page = 0;
+    int opt;
+    while ((opt = getopt(argc, argv, "p:")) != -1) {
+        if (opt == 'p') {
+            char *end;
+            long value = strtol(optarg, &end, 10);
+            if (*optarg == '\0' || *end != '\0' || value < 1 || value > INT_MAX) {
+                fprintf(stderr, "microcalc: invalid page number: %s\n", optarg);
+                return 1;
+            }
+            page = (int)value;
+        } else {
+            fprintf(stderr, "Usage: microcalc [-p page] [file]\n");
+            return 1;
+        }
+    }
+    const char *file = optind < argc ? argv[optind] : NULL;
+    if (page > 0 && (file == NULL || !is_gnumeric_name(file))) {
+        fprintf(stderr, "microcalc: -p only applies to Gnumeric files (.gnumeric, .gnm, .xml)\n");
+        return 1;
+    }
+
     initscr();
     raw();
     noqiflush();
@@ -52,8 +78,8 @@ int main(int argc, char *argv[]) {
 
     memset(grid, 0, sizeof(grid));
 
-    if (argc > 1) {
-        load_sheet(argv[1]);
+    if (file) {
+        load_sheet(file, page);
     }
 
     int ch;

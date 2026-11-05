@@ -191,7 +191,8 @@ typedef struct {
     Cell (*target)[MAX_COLS];
     int sheet_count;
     int root_seen, root_ok;
-    int in_first_sheet;
+    int target_sheet;
+    int in_target_sheet;
     int in_cells;
     int in_cell;
     int has_row, has_col, has_type;
@@ -352,8 +353,8 @@ static void XMLCALL on_start(void *ud, const XML_Char *name, const XML_Char **at
 
     if (strcmp(n, "Sheet") == 0) {
         st->sheet_count++;
-        if (st->sheet_count == 1) st->in_first_sheet = 1;
-    } else if (strcmp(n, "Cells") == 0 && st->in_first_sheet) {
+        if (st->sheet_count == st->target_sheet) st->in_target_sheet = 1;
+    } else if (strcmp(n, "Cells") == 0 && st->in_target_sheet) {
         st->in_cells = 1;
     } else if (strcmp(n, "Cell") == 0 && st->in_cells) {
         st->in_cell = 1;
@@ -386,8 +387,8 @@ static void XMLCALL on_end(void *ud, const XML_Char *name) {
         st->in_cell = 0;
     } else if (st->in_cells && strcmp(n, "Cells") == 0) {
         st->in_cells = 0;
-    } else if (st->in_first_sheet && strcmp(n, "Sheet") == 0) {
-        st->in_first_sheet = 0;
+    } else if (st->in_target_sheet && strcmp(n, "Sheet") == 0) {
+        st->in_target_sheet = 0;
     }
 }
 
@@ -403,27 +404,21 @@ static void XMLCALL on_text(void *ud, const XML_Char *s, int len) {
     }
 }
 
-/* Imports the first sheet of a .gnumeric file (gzip-compressed or plain XML). */
-void load_gnumeric(const char *filename) {
+/* Parses the file, storing cells of target_sheet (1-based; 0 stores none). Returns -1 if it can't be opened, -2 if unreadable. */
+static int gnm_parse(const char *filename, int target_sheet, Cell (*fresh)[MAX_COLS], GnmState *out) {
     gzFile gz = gzopen(filename, "rb");
-    if (!gz) {
-        snprintf(status_msg, sizeof(status_msg), " Error: Could not open Gnumeric file: %s ", filename);
-        return;
-    }
+    if (!gz) return -1;
 
-    Cell (*fresh)[MAX_COLS] = calloc(MAX_ROWS, sizeof *fresh);
     XML_Parser parser = XML_ParserCreateNS(NULL, ' ');
-    if (!fresh || !parser) {
-        free(fresh);
-        if (parser) XML_ParserFree(parser);
+    if (!parser) {
         gzclose(gz);
-        snprintf(status_msg, sizeof(status_msg), " Error: Out of memory while loading Gnumeric file ");
-        return;
+        return -2;
     }
 
     GnmState st;
     memset(&st, 0, sizeof st);
     st.target = fresh;
+    st.target_sheet = target_sheet;
     XML_SetUserData(parser, &st);
     XML_SetElementHandler(parser, on_start, on_end);
     XML_SetCharacterDataHandler(parser, on_text);
@@ -443,14 +438,50 @@ void load_gnumeric(const char *filename) {
         }
         if (last) break;
     }
-    if (!failed && (!st.root_ok || st.sheet_count == 0)) failed = 1;
-
     XML_ParserFree(parser);
     gzclose(gz);
 
-    if (failed) {
+    if (failed || !st.root_ok || st.sheet_count == 0) return -2;
+    *out = st;
+    return 0;
+}
+
+int gnumeric_sheet_count(const char *filename) {
+    Cell (*scratch)[MAX_COLS] = calloc(MAX_ROWS, sizeof *scratch);
+    GnmState st;
+    int rc = scratch ? gnm_parse(filename, 0, scratch, &st) : -2;
+    free(scratch);
+    return rc == 0 ? st.sheet_count : -1;
+}
+
+/* Imports one sheet (1-based) of a .gnumeric file (gzip-compressed or plain XML). */
+void load_gnumeric(const char *filename, int sheet) {
+    if (sheet < 1) {
+        snprintf(status_msg, sizeof(status_msg), " Error: Sheet number must be 1 or more ");
+        return;
+    }
+
+    Cell (*fresh)[MAX_COLS] = calloc(MAX_ROWS, sizeof *fresh);
+    if (!fresh) {
+        snprintf(status_msg, sizeof(status_msg), " Error: Out of memory while loading Gnumeric file ");
+        return;
+    }
+
+    GnmState st;
+    int rc = gnm_parse(filename, sheet, fresh, &st);
+    if (rc == -1) {
+        free(fresh);
+        snprintf(status_msg, sizeof(status_msg), " Error: Could not open Gnumeric file: %s ", filename);
+        return;
+    }
+    if (rc != 0) {
         free(fresh);
         snprintf(status_msg, sizeof(status_msg), " Error: Could not read Gnumeric file: %s ", filename);
+        return;
+    }
+    if (sheet > st.sheet_count) {
+        free(fresh);
+        snprintf(status_msg, sizeof(status_msg), " Error: Sheet %d not found, file has %d sheet(s) ", sheet, st.sheet_count);
         return;
     }
 
@@ -458,5 +489,5 @@ void load_gnumeric(const char *filename) {
     memcpy(grid, fresh, sizeof grid);
     free(fresh);
     recalculate_all();
-    snprintf(status_msg, sizeof(status_msg), " Imported first sheet: %d cells, %d skipped ", st.loaded, st.skipped);
+    snprintf(status_msg, sizeof(status_msg), " Imported sheet %d of %d: %d cells, %d skipped ", sheet, st.sheet_count, st.loaded, st.skipped);
 }
