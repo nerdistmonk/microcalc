@@ -1,5 +1,6 @@
 #include "microcalc.h"
 #include <signal.h>
+#include <strings.h>
 
 // popen() succeeds even when the command is missing, so success is judged by the exit status
 static int run_clipboard_writer(const char *cmd, const char *text) {
@@ -336,6 +337,12 @@ void save_sheet(const char *filename) {
 void load_sheet(const char *filename) {
     if (strstr(filename, ".csv") || strstr(filename, ".CSV")) {
         load_csv(filename);
+        return;
+    }
+    size_t len = strlen(filename);
+    if ((len >= 9 && strcasecmp(filename + len - 9, ".gnumeric") == 0) ||
+        (len >= 4 && strcasecmp(filename + len - 4, ".gnm") == 0)) {
+        load_gnumeric(filename);
         return;
     }
 

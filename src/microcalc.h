@@ -90,6 +90,7 @@ void load_csv(const char *filename);
 void save_csv(const char *filename);
 void save_sheet(const char *filename);
 void load_sheet(const char *filename);
+void load_gnumeric(const char *filename);
 void export_pdf(const char *filename);
 
 void show_cheatsheet(void);
