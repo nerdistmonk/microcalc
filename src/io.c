@@ -341,7 +341,8 @@ void load_sheet(const char *filename) {
     }
     size_t len = strlen(filename);
     if ((len >= 9 && strcasecmp(filename + len - 9, ".gnumeric") == 0) ||
-        (len >= 4 && strcasecmp(filename + len - 4, ".gnm") == 0)) {
+        (len >= 4 && strcasecmp(filename + len - 4, ".gnm") == 0) ||
+        (len >= 4 && strcasecmp(filename + len - 4, ".xml") == 0)) {
         load_gnumeric(filename);
         return;
     }

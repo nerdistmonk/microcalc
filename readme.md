@@ -13,7 +13,7 @@
 - **System Clipboard Integration:** Seamlessly copy and paste spreadsheet ranges as TSV/CSV blocks directly to/from your system clipboard (`wl-copy`/`wl-paste` for Wayland, or `xclip`/`xsel` for X11).
 - **Undo & Redo Stacks:** Full multi-level `Ctrl+Z` (Undo) and `Ctrl+R` (Redo) support.
 - **Printable PDF Export:** Export your sheet directly into a clean, standalone PDF document complete with dynamic column-width layout and Helvetica typography.
-- **File I/O:** Save and load using a native `.mc` pipe-delimited format (preserving formulas and color states) or flat `.csv` files. Import Gnumeric `.gnumeric` / `.gnm` files as well.
+- **File I/O:** Save and load using a native `.mc` pipe-delimited format (preserving formulas and color states) or flat `.csv` files. Import Gnumeric `.gnumeric` / `.gnm` / `.xml` files as well.
 - **Visual Cell Highlighting:** Tag cells for financial tracking (Green for profit, Red for loss).
 - **Smart Formatting & Quick Actions:** One-click number/currency standardization (`Ctrl+F`), quick-sum formulas via double-clicking, and path auto-completion (`Tab`) in file dialogs.
 
@@ -44,7 +44,7 @@
 ### File I/O & Extras
 | Control | Action |
 | :--- | :--- |
-| **Ctrl + S / Ctrl + O** | Save / Open (`.mc` native or `.csv`; open also accepts `.gnumeric` / `.gnm`) |
+| **Ctrl + S / Ctrl + O** | Save / Open (`.mc` native or `.csv`; open also accepts `.gnumeric` / `.gnm` / `.xml`) |
 | **Ctrl + P** | Export printable sheet as a PDF document |
 | **Ctrl + H** | Open built-in help cheatsheet |
 | **q / Q** | Quit application |
@@ -91,4 +91,4 @@ Make sure you have a C compiler (`gcc`/`clang`), `cmake`, and `ncurses` developm
 
 - **`.mc` (Native):** Preserves formulas, cell values, and color states in a compact pipe-delimited structure (`row|col|color|text`).
 - **`.csv` (Flat Data):** Standard comma-separated values format for interoperability with other spreadsheet tools (note: formulas evaluate to static text/numbers upon export).
-- **`.gnumeric` / `.gnm` (Import only):** Gnumeric spreadsheets (plain XML or gzip-compressed). Only the first sheet is imported. Numbers and text are kept. Simple formulas (cell references, `+ - * /`, `%`, and `SUM`/`AVG`/`MIN`/`MAX`/`COUNT`) are translated to Microcalc syntax. Other formulas, text starting with `=`, and booleans or errors (imported as text) are not preserved. Text is limited to 63 characters and collapsed to one line.
+- **`.gnumeric` / `.gnm` / `.xml` (Import only):** Gnumeric spreadsheets (plain XML or gzip-compressed). Only the first sheet is imported. Numbers and text are kept. Simple formulas (cell references, `+ - * /`, `%`, and `SUM`/`AVG`/`MIN`/`MAX`/`COUNT`) are translated to Microcalc syntax. Other formulas, text starting with `=`, and booleans or errors (imported as text) are not preserved. Text is limited to 63 characters and collapsed to one line.
