@@ -443,7 +443,7 @@ static int v_expr(const char *s, int *p) {
     return 1;
 }
 
-static int formula_is_valid(const char *expr) {
+int formula_is_valid(const char *expr) {
     char c1, c2, op;
     int r1, r2, n = 0;
 

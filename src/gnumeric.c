@@ -271,6 +271,22 @@ static void store_text(GnmState *st, Cell *cell, const char *text) {
     st->loaded++;
 }
 
+/* Keeps an untranslated formula as-is so Microcalc flags it as invalid (red).
+   Refused if Microcalc would accept it, since its meaning would differ. */
+static int keep_untranslated_formula(const char *src, Cell *cell) {
+    size_t len = strlen(src);
+    if (len > sizeof cell->text - 1) return 0;
+    char expr[sizeof cell->text];
+    int k = 0;
+    for (const char *s = src + 1; *s; s++) {
+        if (*s != '$') expr[k++] = *s;
+    }
+    expr[k] = '\0';
+    if (formula_is_valid(expr)) return 0;
+    memcpy(cell->text, src, len + 1);
+    return 1;
+}
+
 static void finish_cell(GnmState *st) {
     if (!st->has_row || !st->has_col) return;
     if (st->row < 0 || st->row >= MAX_ROWS || st->col < 0 || st->col >= MAX_COLS || st->content_overflow) {
@@ -286,6 +302,8 @@ static void finish_cell(GnmState *st) {
             char translated[256];
             if (translate_formula(st->content, translated, sizeof translated)) {
                 store_text(st, cell, translated);
+            } else if (keep_untranslated_formula(st->content, cell)) {
+                st->loaded++;
             } else {
                 st->skipped++;
             }

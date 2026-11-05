@@ -78,6 +78,7 @@ void undo_action(void);
 void redo_action(void);
 void recalculate_all(void);
 void eval_cell(int r, int c);
+int formula_is_valid(const char *expr);
 
 void cleanup_selection_format(void);
 void copy_selection(void);
