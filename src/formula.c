@@ -169,7 +169,7 @@ static double eval_range(const char *func, int r1, int c1, int r2, int c2) {
             if (r == cur_eval_r && c == cur_eval_c) continue;
 
             if (r >= 0 && r < MAX_ROWS && c >= 0 && c < MAX_COLS) {
-                if (grid[r][c].text[0] == '=' && grid[r][c].is_value_error) {
+                if (grid[r][c].text[0] == '=' && (grid[r][c].is_value_error || grid[r][c].is_invalid)) {
                     eval_error = 1;
                     continue;
                 }
