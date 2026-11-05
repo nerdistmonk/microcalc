@@ -181,7 +181,7 @@ void draw_grid(void) {
             } else if (selected || is_all_selected) {
                 attron(COLOR_PAIR(4) | A_REVERSE);
             } else {
-                if (grid[actual_r][c].is_invalid) {
+                if (grid[actual_r][c].is_invalid || grid[actual_r][c].is_value_error) {
                     attron(COLOR_PAIR(7) | A_BOLD);
                 } else if (grid[actual_r][c].color_state == 1) {
                     attron(COLOR_PAIR(5));
@@ -194,6 +194,8 @@ void draw_grid(void) {
 
             if (grid[actual_r][c].text[0] == '\0') {
                 printw("%*s", w, "");
+            } else if (grid[actual_r][c].is_value_error) {
+                print_cell_fit("#VALUE!", w, 0);
             } else if (grid[actual_r][c].is_formula && !grid[actual_r][c].is_invalid) {
                 char num[64];
                 snprintf(num, sizeof(num), "%g", grid[actual_r][c].value);
@@ -207,7 +209,7 @@ void draw_grid(void) {
             } else if (selected || is_all_selected) {
                 attroff(COLOR_PAIR(4) | A_REVERSE);
             } else {
-                if (grid[actual_r][c].is_invalid) attroff(COLOR_PAIR(7) | A_BOLD);
+                if (grid[actual_r][c].is_invalid || grid[actual_r][c].is_value_error) attroff(COLOR_PAIR(7) | A_BOLD);
                 else if (grid[actual_r][c].color_state == 1) attroff(COLOR_PAIR(5));
                 else if (grid[actual_r][c].color_state == 2) attroff(COLOR_PAIR(6));
                 else attroff(COLOR_PAIR(4));

@@ -24,6 +24,7 @@ typedef struct {
     double value;
     int is_formula;
     int is_invalid;
+    int is_value_error; // formula result is #VALUE! (text or error in a reference)
     int color_state; // 0: Normal, 1: Green (+), 2: Red (-)
 } Cell;
 

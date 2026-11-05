@@ -415,6 +415,8 @@ static void escape_pdf_string(const char *src, char *dest, size_t dest_size) {
 static void get_cell_display_text(int r, int c, char *out, size_t max_len) {
     if (grid[r][c].text[0] == '\0') {
         out[0] = '\0';
+    } else if (grid[r][c].is_value_error) {
+        strcpy(out, "#VALUE!");
     } else if (grid[r][c].is_formula) {
         snprintf(out, max_len, "%g", grid[r][c].value);
     } else {

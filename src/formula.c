@@ -137,6 +137,24 @@ static void skip_whitespace(Parser *p) {
     }
 }
 
+static int eval_error = 0;
+
+static int ref_is_error(int r, int c) {
+    const Cell *cell = &grid[r][c];
+    if (cell->text[0] == '\0') return 0;
+    if (cell->text[0] == '=') return cell->is_invalid || cell->is_value_error;
+    return !is_pure_number(cell->text);
+}
+
+static void set_formula_result(int r, int c, double v) {
+    if (eval_error) {
+        grid[r][c].is_value_error = 1;
+        grid[r][c].value = 0.0;
+    } else {
+        grid[r][c].value = v;
+    }
+}
+
 static double eval_range(const char *func, int r1, int c1, int r2, int c2) {
     int min_r = (r1 < r2) ? r1 : r2;
     int max_r = (r1 > r2) ? r1 : r2;
@@ -151,6 +169,10 @@ static double eval_range(const char *func, int r1, int c1, int r2, int c2) {
             if (r == cur_eval_r && c == cur_eval_c) continue;
 
             if (r >= 0 && r < MAX_ROWS && c >= 0 && c < MAX_COLS) {
+                if (grid[r][c].text[0] == '=' && grid[r][c].is_value_error) {
+                    eval_error = 1;
+                    continue;
+                }
                 if (grid[r][c].text[0] == '=' ? !grid[r][c].is_invalid : is_pure_number(grid[r][c].text)) {
                     double val = grid[r][c].value;
                     sum += val;
@@ -238,6 +260,7 @@ static double parse_primary(Parser *p) {
             }
             if (row_idx == cur_eval_r && col_idx == cur_eval_c) return 0.0;
             if (col_idx >= 0 && col_idx < MAX_COLS && row_idx >= 0 && row_idx < MAX_ROWS) {
+                if (ref_is_error(row_idx, col_idx)) eval_error = 1;
                 return grid[row_idx][col_idx].value;
             }
             return 0.0;
@@ -450,6 +473,8 @@ void eval_cell(int r, int c) {
     cur_eval_r = r;
     cur_eval_c = c;
     grid[r][c].is_invalid = 0;
+    grid[r][c].is_value_error = 0;
+    eval_error = 0;
 
     if (grid[r][c].text[0] == '=') {
         grid[r][c].is_formula = 1;
@@ -473,19 +498,19 @@ void eval_cell(int r, int c) {
         if (sscanf(expr, " %c%d : %c%d", &c1, &r1, &c2, &r2) == 4) {
             int col1 = toupper((unsigned char)c1) - 'A';
             int col2 = toupper((unsigned char)c2) - 'A';
-            grid[r][c].value = eval_range("SUM", r1, col1, r2, col2);
+            set_formula_result(r, c, eval_range("SUM", r1, col1, r2, col2));
             return;
         }
         if (sscanf(expr, " %c%d%c%c%d", &c1, &r1, &temp_op, &c2, &r2) == 5 && strchr("asMmc", temp_op)) {
             int col1 = toupper((unsigned char)c1) - 'A';
             int col2 = toupper((unsigned char)c2) - 'A';
             char fn_str[2] = {temp_op, '\0'};
-            grid[r][c].value = eval_range(fn_str, r1, col1, r2, col2);
+            set_formula_result(r, c, eval_range(fn_str, r1, col1, r2, col2));
             return;
         }
 
         Parser p = { .src = expr, .pos = 0 };
-        grid[r][c].value = parse_expr(&p);
+        set_formula_result(r, c, parse_expr(&p));
     } else {
         grid[r][c].is_formula = 0;
         if (is_pure_number(grid[r][c].text)) {
