@@ -447,7 +447,7 @@ static int formula_is_valid(const char *expr) {
     char c1, c2, op;
     int r1, r2, n = 0;
 
-    if (sscanf(expr, " %c%d%c%c%d%n", &c1, &r1, &op, &c2, &r2, &n) == 5 &&
+    if (sscanf(expr, " %c%d %c %c%d%n", &c1, &r1, &op, &c2, &r2, &n) == 5 &&
         isalpha((unsigned char)c1) && isalpha((unsigned char)c2) && strchr("asMmc", op) &&
         ref_in_bounds(c1, r1) && ref_in_bounds(c2, r2)) {
         int p = n;
@@ -501,7 +501,7 @@ void eval_cell(int r, int c) {
             set_formula_result(r, c, eval_range("SUM", r1, col1, r2, col2));
             return;
         }
-        if (sscanf(expr, " %c%d%c%c%d", &c1, &r1, &temp_op, &c2, &r2) == 5 && strchr("asMmc", temp_op)) {
+        if (sscanf(expr, " %c%d %c %c%d", &c1, &r1, &temp_op, &c2, &r2) == 5 && strchr("asMmc", temp_op)) {
             int col1 = toupper((unsigned char)c1) - 'A';
             int col2 = toupper((unsigned char)c2) - 'A';
             char fn_str[2] = {temp_op, '\0'};

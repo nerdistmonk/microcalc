@@ -25,6 +25,7 @@ void show_cheatsheet(void) {
     mvprintw(19, 4, "• Ctrl+S / Ctrl+O    : Save / Open (.mc native or .csv flat spreadsheet)");
     mvprintw(20, 4, "• Ctrl+P             : Export printable sheet as PDF document");
     mvprintw(21, 4, "• Formula Examples   : =A0+A1*(B2-5) | =SUM(A0:A10) | =AVG(C0:C5)");
+    mvprintw(22, 4, "• Type in edit box   : =D today's date | =T time | =DT date and time");
 
     attron(COLOR_PAIR(3) | A_BOLD);
     mvprintw(23, 2, " Press any key to return to your spreadsheet... ");
@@ -156,7 +157,7 @@ void draw_grid(void) {
     mvprintw(4, 0, "    ");
     for (int c = view_c; c < view_c + visible_cols && c < MAX_COLS; c++) {
         int w = col_widths[c];
-        printw(" %*c%*s", (w / 2) + 1, 'A' + c, w - (w / 2) - 1, "");
+        printw("%*c%*s", ((w - 1) / 2) + 1, 'A' + c, w - (w - 1) / 2, "");
     }
     attroff(COLOR_PAIR(3));
 
