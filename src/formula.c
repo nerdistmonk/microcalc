@@ -321,7 +321,7 @@ static int ev_operand(Ev *e, double *out) {
         if (e->s[e->p] != ')') return 0;
         e->p++;
     } else if (ch == 'p' && !isdigit((unsigned char)e->s[e->p + 1])) {
-        /* pX opens a group that runs to the end of the formula or enclosing parenthesis */
+        /* p<cell> opens a group that runs to the end of the formula or enclosing parenthesis */
         e->p++;
         if (!ev_expr(e, out)) return 0;
     } else if (isdigit((unsigned char)ch) || ch == '.') {
