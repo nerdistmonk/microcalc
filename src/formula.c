@@ -168,6 +168,10 @@ static void acc_cell(RangeAcc *a, int r, int c) {
         eval_error = 1;
         return;
     }
+    if (grid[r][c].text[0] != '\0' && grid[r][c].text[0] != '=' && !is_pure_number(grid[r][c].text)) {
+        eval_error = 1;
+        return;
+    }
     if (grid[r][c].text[0] == '=' ? !grid[r][c].is_invalid : is_pure_number(grid[r][c].text)) {
         double val = grid[r][c].value;
         a->sum += val;
